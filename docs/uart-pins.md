@@ -32,8 +32,18 @@ contention), and logs which pin/baud carries Tuya `AA55` DP frames — that pin 
 (= the MCU's TX). It hex-dumps what it hears, so the real framing, baud and DP ids are captured at
 the same time.
 
+**The scan is disarmed at boot and self-gating.** On power-up the image is pure connectivity
+(WiFi + API + OTA) and touches no GPIO, so a sealed dock first proves it is reachable. Probing
+starts only once you turn on the **Pin scan enabled** switch AND a HA/API client is connected, and
+it stops the instant either goes away — a reset can never start a scan unattended (the switch is
+`restore_mode: ALWAYS_OFF`). The candidate list is an allow-list in `__init__.py` that refuses the
+flash pins (11–17) and USB-JTAG pins (18–19). At boot it also logs the partition table and the
+running/next-OTA slot, and exposes a `boot_other_slot` API action that flips back to the stock slot
+with zero upload.
+
 ```
 esphome run esphome/wybot-dock-pinscan.yaml --device <dock-ip>   # watch for '** HIT **'
+# then, in HA: turn on "Pin scan enabled" (stay connected) to arm the passive scan
 ```
 
 Then:
@@ -44,4 +54,4 @@ Then:
 3. Set the discovered `tx_pin` / `rx_pin` / `baud_rate` in `wybot-dock.yaml`, enable `wybot_bridge`,
    and OTA the real functional image.
 
-The scanner image **compiles** (bench-verified, ~895 KB) and is ready to flash.
+The hardened scanner image **compiles** (bench-verified, ~900 KB, 49% flash) and is ready to flash.
