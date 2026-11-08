@@ -93,7 +93,13 @@ wybot_bridge:
     name: "Cleaning"
     device_class: running
     icon: mdi:robot-vacuum
-  # battery_datapoint: 50, activity_datapoint: 111, activity_threshold: 16, cleaning_timeout: 6min (defaults)
+  # Onboard "robot is charging" detection. The solar dock leaves DP50 charge_state at 0 even while
+  # charging, so this latches on a battery-% RISE while docked (and on charge_state==1 for a standard
+  # dock), and clears at 100% / charge_state==2 / on drain / after charge_timeout.
+  charging:
+    name: "Robot Charging"
+    icon: mdi:battery-charging
+  # battery_datapoint: 50, activity_datapoint: 111, activity_threshold: 16, cleaning_timeout: 6min, charge_timeout: 10min (defaults)
   numeric_datapoints:
     # ---- robot battery / charge (DP50 = [charge_state][battery%]) ----
     - { dp: 50, byte_offset: 1, byte_width: 1, name: "Robot Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0 }
@@ -175,12 +181,9 @@ button:
       - lambda: "id(bridge).write_enum(11, 0x01);"
 
 binary_sensor:
-  - platform: template
-    name: "Robot Charging"
-    device_class: battery_charging
-    lambda: |-
-      if (isnan(id(charge_state).state)) return {};
-      return ((int) id(charge_state).state) == 1;
+  # NOTE: "Robot Charging" is now a native binary_sensor owned by the wybot_bridge component (see the
+  # `charging:` key above) using battery-rise detection. The old `charge_state == 1` template was wrong
+  # on the solar dock, which never sets charge_state to 1 even while charging.
   - platform: template
     name: "Docked"
     device_class: connectivity

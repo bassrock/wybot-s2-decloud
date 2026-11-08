@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart, sensor, text_sensor, binary_sensor
-from esphome.const import CONF_ID, DEVICE_CLASS_RUNNING
+from esphome.const import CONF_ID, DEVICE_CLASS_RUNNING, DEVICE_CLASS_BATTERY_CHARGING
 
 CODEOWNERS = ["@bassrock"]
 DEPENDENCIES = ["uart"]
@@ -15,10 +15,12 @@ CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
 CONF_NUMERIC = "numeric_datapoints"
 CONF_TEXT = "text_datapoints"
 CONF_CLEANING = "cleaning"
+CONF_CHARGING = "charging"
 CONF_BATTERY_DP = "battery_datapoint"
 CONF_ACTIVITY_DP = "activity_datapoint"
 CONF_ACTIVITY_THRESHOLD = "activity_threshold"
 CONF_CLEANING_TIMEOUT = "cleaning_timeout"
+CONF_CHARGE_TIMEOUT = "charge_timeout"
 CONF_DP = "dp"
 CONF_SCALE = "scale"
 CONF_FORMAT = "format"
@@ -54,10 +56,14 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_CLEANING): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_RUNNING
             ),
+            cv.Optional(CONF_CHARGING): binary_sensor.binary_sensor_schema(
+                device_class=DEVICE_CLASS_BATTERY_CHARGING
+            ),
             cv.Optional(CONF_BATTERY_DP, default=50): cv.int_range(min=0, max=255),
             cv.Optional(CONF_ACTIVITY_DP, default=111): cv.int_range(min=0, max=255),
             cv.Optional(CONF_ACTIVITY_THRESHOLD, default=16): cv.int_range(min=1, max=100000),
             cv.Optional(CONF_CLEANING_TIMEOUT, default="6min"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_CHARGE_TIMEOUT, default="10min"): cv.positive_time_period_milliseconds,
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -74,10 +80,15 @@ async def to_code(config):
     cg.add(var.set_activity_dp(config[CONF_ACTIVITY_DP]))
     cg.add(var.set_activity_threshold(config[CONF_ACTIVITY_THRESHOLD]))
     cg.add(var.set_cleaning_timeout(config[CONF_CLEANING_TIMEOUT]))
+    cg.add(var.set_charge_timeout(config[CONF_CHARGE_TIMEOUT]))
 
     if CONF_CLEANING in config:
         bs = await binary_sensor.new_binary_sensor(config[CONF_CLEANING])
         cg.add(var.set_cleaning_sensor(bs))
+
+    if CONF_CHARGING in config:
+        cbs = await binary_sensor.new_binary_sensor(config[CONF_CHARGING])
+        cg.add(var.set_charging_sensor(cbs))
 
     for conf in config.get(CONF_NUMERIC, []):
         s = await sensor.new_sensor(conf)

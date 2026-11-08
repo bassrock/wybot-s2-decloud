@@ -48,6 +48,8 @@ void WybotBridge::setup() {
                 (unsigned) this->hb_interval_);
   if (this->cleaning_ != nullptr)
     this->cleaning_->publish_state(false);  // definite "off" at boot, not unknown (self-corrects on first drain)
+  if (this->charging_sensor_ != nullptr)
+    this->charging_sensor_->publish_state(false);  // definite "off" at boot (self-corrects on first battery rise)
   this->heartbeat();  // kick the slave once at boot
 }
 
@@ -62,6 +64,10 @@ void WybotBridge::loop() {
   // auto-clear "cleaning" once the robot stops drawing the battery down (or starts charging)
   if (this->cleaning_state_ && (this->charging_ || (now - this->last_activity_ms_ > this->cleaning_timeout_ms_)))
     this->set_cleaning_(false);
+
+  // auto-clear "charging" if the battery stops rising for a while (covers reports going quiet)
+  if (this->charging_ && (now - this->last_charge_rise_ms_ > this->charge_timeout_ms_))
+    this->set_charging_(false);
 
   // drain + frame UART
   while (this->available()) {
@@ -183,18 +189,40 @@ void WybotBridge::set_cleaning_(bool v) {
     this->cleaning_->publish_state(v);
 }
 
+void WybotBridge::set_charging_(bool v) {
+  if (v == this->charging_)
+    return;
+  this->charging_ = v;
+  if (this->charging_sensor_ != nullptr)
+    this->charging_sensor_->publish_state(v);
+}
+
 void WybotBridge::update_cleaning_(uint8_t dp, const std::vector<uint8_t> &data) {
   const uint32_t now = millis();
 
   // DP50 = [charge_state][battery%]. charge_state 1 = charging on the dock. Battery only drops
   // while the motors run, so a downward tick (when not charging) means the robot is cleaning.
   if (dp == this->battery_dp_ && data.size() >= 2) {
-    int charge_state = data[0];
+    int charge_state = data[0];  // 0 unplugged/solar, 1 charging (standard dock), 2 charged/full
     int batt = data[1];
-    this->charging_ = (charge_state == 1);
+    bool rising = (this->last_battery_ >= 0 && batt > this->last_battery_);
+    bool draining = (this->last_battery_ >= 0 && batt < this->last_battery_);
+
+    // Charging: explicit charge_state==1, OR the pack % ticked up (the solar-dock case, where
+    // charge_state stays 0). Latch off when full/charged, when draining, or after charge_timeout.
+    if (batt >= 100 || charge_state == 2) {
+      this->set_charging_(false);
+    } else if (charge_state == 1 || rising) {
+      this->last_charge_rise_ms_ = now;
+      this->set_charging_(true);
+    } else if (draining) {
+      this->set_charging_(false);
+    }
+
+    // Cleaning: battery drawn down while NOT charging means the motors are running.
     if (this->charging_) {
       this->set_cleaning_(false);
-    } else if (this->last_battery_ >= 0 && batt < this->last_battery_) {
+    } else if (draining) {
       this->last_activity_ms_ = now;
       this->set_cleaning_(true);
     }

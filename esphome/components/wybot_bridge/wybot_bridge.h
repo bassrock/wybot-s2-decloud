@@ -45,6 +45,16 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   void set_activity_threshold(int t) { this->activity_threshold_ = t; }
   void set_cleaning_timeout(uint32_t ms) { this->cleaning_timeout_ms_ = ms; }
 
+  // --- Derived "robot is charging" detection -------------------------------------------------
+  // On a STANDARD dock the robot sets battery_dp byte0 (charge_state) to 1 while charging. On the
+  // SOLAR dock it leaves charge_state at 0 the whole time, so that byte alone reads "not charging"
+  // even as the pack fills. We therefore treat the robot as charging when charge_state==1 OR the
+  // battery % ticks UP while docked, and latch it off on a battery drop, a "charged" state, 100%,
+  // or charge_timeout with no further rise. This mirrors the cleaning detector (battery down) in
+  // reverse (battery up).
+  void set_charging_sensor(binary_sensor::BinarySensor *s) { this->charging_sensor_ = s; }
+  void set_charge_timeout(uint32_t ms) { this->charge_timeout_ms_ = ms; }
+
   // dp -> entity registrations (from __init__.py). A DP may feed several numeric sensors,
   // each extracting a different slice (offset/width) of the DP data (e.g. DP50 byte1 =
   // charge state, byte2 = battery %). offset<0 + width<0 means "whole value".
@@ -108,6 +118,7 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   void handle_report_(const std::vector<uint8_t> &payload);
   void update_cleaning_(uint8_t dp, const std::vector<uint8_t> &data);  // battery/run-counter latch
   void set_cleaning_(bool v);
+  void set_charging_(bool v);
 
   std::vector<NumReg> num_;
   std::map<uint8_t, TxtReg> txt_;
@@ -129,7 +140,12 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   long last_activity_val_{-1};
   uint32_t last_activity_ms_{0};
   bool cleaning_state_{false};
-  bool charging_{false};
+  bool charging_{false};  // internal truth: suppresses cleaning + drives the charging sensor
+
+  // charging detection
+  binary_sensor::BinarySensor *charging_sensor_{nullptr};
+  uint32_t charge_timeout_ms_{600000};  // 10 min with no battery rise (and not charge_state==1) -> not charging
+  uint32_t last_charge_rise_ms_{0};
 };
 
 }  // namespace wybot_bridge
