@@ -25,7 +25,8 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  output_power: 8.5dB   # ESP32-C3 RF fix; RAISE (~15dB) for the real dock if its RSSI is weak
+  output_power: 8.5dB   # ESP32-C3 RF fix; safe for the real dock (-44 dBm full-power/86% in UniFi,
+                        # so -11.5 dB still ~-55 dBm). Raise toward 15dB only if a later check is weak.
   ap:
     ssid: "WyBot-Dock Setup"
     password: !secret fallback_ap_password
