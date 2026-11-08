@@ -58,10 +58,11 @@ external_components:
 wybot_pinscan:
   id: pinscan
   uart_num: 1
-  # 1st pass. If nothing hits, append 20, 21 (2nd pass), then 2, 8, 9 (3rd pass).
-  candidate_pins: [0, 1, 3, 4, 5, 6, 7, 10]
-  bauds: [115200, 9600]   # 9600 is the Tuya default
-  dwell_ms: 20000         # MCUs may only answer when polled, so listen long per (pin, baud)
+  # WIDE pass: every probe-safe GPIO incl. strapping (2/8/9) and the free UART0 pins (20/21),
+  # since the first 115200-only pass over [0,1,3,4,5,6,7,10] found 0 bytes everywhere.
+  candidate_pins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21]
+  bauds: [9600, 115200]   # 9600 FIRST: it's the Tuya default and the likely real link rate
+  dwell_ms: 16000         # >1 typical 15s MCU heartbeat, so a slow unsolicited frame can't be missed
 
 # Arm switch: probing is OFF until this is turned on (and never runs unless an API client is
 # connected). Always boots OFF so a reset can't start a scan unattended.

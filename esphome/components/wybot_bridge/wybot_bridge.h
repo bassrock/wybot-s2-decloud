@@ -1,54 +1,135 @@
 #pragma once
-// WyBot DS20 dock <-> GD32 motor MCU UART bridge.
+// WyBot DS20 dock <-> GD32 MCU UART bridge (local, cloud-free).
 //
-// Re-emits Tuya-style datapoint (DP) frames (documented in ../../docs/protocol.md) on the
-// C3<->MCU UART, and parses DP reports coming back from the MCU into Home Assistant.
+// PROTOCOL (recovered by static RE of the stock C3 image + confirmed live on the dock):
+//   Link: UART0 @ 115200 8N1, C3 TX=GPIO21 / C3 RX=GPIO20. The MCU is a SLAVE: it idles its TX
+//   high and only answers when polled, so the bridge must drive the conversation.
+//   Frame:  AA 55 00 | cmd(1) | plen(2, little-endian) | payload[plen] | cksum(1)
+//           cksum = sum(every byte from the first AA through the last payload byte) & 0xFF
+//   Commands (C3 -> MCU):  0x00 heartbeat,  0x09 query DP (payload = dp_id),  0x04 write DP.
+//   Reports (MCU -> C3):   0x00 heartbeat reply (const 10 10 00),  0x05 DP report.
+//   DP report payload = one or more datapoints concatenated:
+//           dp_id(1) | dp_type(1) | dp_len(1) | data[dp_len]
+//           types: 0x01 bool(1B), 0x02 int(dp_len B, LITTLE-endian, signed), 0x04 enum(1B),
+//                  0x05 bitmap(4B), 0x00 raw.
 //
-// Frame (from pywybot BLE/MQTT framing; the UART framing is assumed identical and is to be
-// CONFIRMED against real captured MCU traffic once this runs on the dock):
-//   AA 55 | cmd(2, big-endian) | len(2, little-endian) | payload | checksum(1)
-//   payload = dp_id(1) dp_type(1) dp_len(2, big-endian) data[dp_len]
-//   checksum = sum(all bytes from first AA through last payload byte) & 0xFF   (TO CONFIRM)
+// The bridge round-robin polls a configured DP set, parses the reports into HA entities, and
+// sends periodic heartbeats as a keep-alive. Writes (control) are exposed as services.
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
 #include "esphome/components/uart/uart.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#include <map>
 #include <vector>
 
 namespace esphome {
 namespace wybot_bridge {
 
-class WybotBridge : public Component, public uart::UARTDevice {
+class WybotBridge : public PollingComponent, public uart::UARTDevice {
  public:
-  void set_status_sensor(text_sensor::TextSensor *s) { this->status_ = s; }
+  void set_heartbeat_interval(uint32_t ms) { this->hb_interval_ = ms; }
 
+  // --- Derived "robot is actively cleaning" detection ---------------------------------------
+  // The dock reports the robot's DP0 status over a short-range link that goes STALE the moment the
+  // robot swims away, so DP0 reads "stopped" mid-clean. But the dock reports the robot BATTERY
+  // (battery_dp byte1) and a fast run-counter (activity_dp) accurately. The motors only draw the
+  // battery down, and the run-counter only climbs fast, while the robot is actually working. So we
+  // latch "cleaning" on a battery drop OR a fast run-counter advance (never while charging), and
+  // auto-clear it after cleaning_timeout with no further activity.
+  void set_cleaning_sensor(binary_sensor::BinarySensor *s) { this->cleaning_ = s; }
+  void set_battery_dp(uint8_t d) { this->battery_dp_ = d; }
+  void set_activity_dp(uint8_t d) { this->activity_dp_ = d; }
+  void set_activity_threshold(int t) { this->activity_threshold_ = t; }
+  void set_cleaning_timeout(uint32_t ms) { this->cleaning_timeout_ms_ = ms; }
+
+  // dp -> entity registrations (from __init__.py). A DP may feed several numeric sensors,
+  // each extracting a different slice (offset/width) of the DP data (e.g. DP50 byte1 =
+  // charge state, byte2 = battery %). offset<0 + width<0 means "whole value".
+  void add_numeric(uint8_t dp, sensor::Sensor *s, float scale, int offset, int width, bool is_signed) {
+    this->num_.push_back({dp, s, scale, offset, width, is_signed});
+    this->register_poll_(dp);
+  }
+  void add_text(uint8_t dp, text_sensor::TextSensor *s, bool as_hex) {
+    this->txt_[dp] = {s, as_hex};
+    this->register_poll_(dp);
+  }
+  // Latest raw DP data (hex), for template/select/button lambdas in YAML.
+  bool dp_byte(uint8_t dp, int offset, uint8_t &out) const {
+    auto it = this->last_data_.find(dp);
+    if (it == this->last_data_.end() || offset < 0 || (size_t) offset >= it->second.size())
+      return false;
+    out = it->second[offset];
+    return true;
+  }
+  int dp_int(uint8_t dp) const {  // whole-value little-endian signed, or -1 if absent
+    auto it = this->last_data_.find(dp);
+    if (it == this->last_data_.end() || it->second.empty())
+      return -1;
+    int32_t v = 0;
+    const auto &d = it->second;
+    for (size_t k = 0; k < d.size() && k < 4; k++)
+      v |= ((int32_t) d[k]) << (8 * k);
+    return v;
+  }
+
+  void setup() override;
   void loop() override;
+  void update() override;  // PollingComponent: fires one query per poll_interval
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
 
-  // Low-level DP op. cmd mirrors the MQTT/BLE mapping (4=write, 9=query, 5=report).
-  void send_dp(uint16_t cmd, uint8_t dp_id, uint8_t dp_type, const std::vector<uint8_t> &data);
+  // Build + send a framed command.
+  void send_cmd(uint8_t cmd, const std::vector<uint8_t> &payload);
+  void query_dp(uint8_t dp) { this->send_cmd(0x09, {dp}); }
+  void heartbeat() { this->send_cmd(0x00, {}); }
 
-  // Known DPs (from pywybot). Values/modes are placeholders to confirm from capture.
-  void start_clean() { this->send_dp(CMD_WRITE, 0, DP_BOOL, {1}); }
-  void stop_clean() { this->send_dp(CMD_WRITE, 0, DP_BOOL, {0}); }
-  void set_mode(uint8_t m) { this->send_dp(CMD_WRITE, 1, DP_ENUM, {m}); }
-  void query(uint8_t dp_id) { this->send_dp(CMD_QUERY, dp_id, DP_RAW, {}); }
+  // DP writes (control). value encoded per type.
+  void write_bool(uint8_t dp, bool v) { this->send_cmd(0x04, dp_frame_(dp, 0x01, {(uint8_t) (v ? 1 : 0)})); }
+  void write_enum(uint8_t dp, uint8_t v) { this->send_cmd(0x04, dp_frame_(dp, 0x04, {v})); }
+  void write_int(uint8_t dp, int32_t v) {
+    this->send_cmd(0x04, dp_frame_(dp, 0x02,
+                                   {(uint8_t) (v & 0xFF), (uint8_t) ((v >> 8) & 0xFF),
+                                    (uint8_t) ((v >> 16) & 0xFF), (uint8_t) ((v >> 24) & 0xFF)}));
+  }
+  // Escape hatch for exploration from HA: send arbitrary raw bytes verbatim.
+  void send_raw(const std::vector<uint8_t> &bytes) { this->write_array(bytes); }
 
  protected:
-  static const uint16_t CMD_WRITE = 0x0004;
-  static const uint16_t CMD_QUERY = 0x0009;
-  static const uint16_t CMD_REPORT = 0x0005;
-  static const uint8_t DP_RAW = 0, DP_BOOL = 1, DP_INT = 2, DP_ENUM = 4;
-  // enum (prvalues) so these can be ODR-used (push_back takes const&) without out-of-line defs
-  enum : uint8_t { HDR0 = 0xAA, HDR1 = 0x55 };
+  struct NumReg { uint8_t dp; sensor::Sensor *s; float scale; int offset; int width; bool is_signed; };
+  struct TxtReg { text_sensor::TextSensor *s; bool hex; };
 
-  static uint8_t checksum(const std::vector<uint8_t> &f, size_t upto);
-  void handle_frame(const std::vector<uint8_t> &f);
+  static uint8_t checksum_(const std::vector<uint8_t> &f, size_t upto);
+  static std::vector<uint8_t> dp_frame_(uint8_t dp, uint8_t type, const std::vector<uint8_t> &data);
+  void register_poll_(uint8_t dp);
+  void handle_frame_(const std::vector<uint8_t> &f);
+  void handle_report_(const std::vector<uint8_t> &payload);
+  void update_cleaning_(uint8_t dp, const std::vector<uint8_t> &data);  // battery/run-counter latch
+  void set_cleaning_(bool v);
+
+  std::vector<NumReg> num_;
+  std::map<uint8_t, TxtReg> txt_;
+  std::map<uint8_t, std::vector<uint8_t>> last_data_;
+  std::vector<uint8_t> poll_list_;
+  size_t poll_idx_{0};
 
   std::vector<uint8_t> rx_;
-  text_sensor::TextSensor *status_{nullptr};
+  uint32_t hb_interval_{2000};
+  uint32_t last_hb_{0};
+
+  // cleaning detection
+  binary_sensor::BinarySensor *cleaning_{nullptr};
+  uint8_t battery_dp_{50};      // DP50 = [charge_state][battery%]
+  uint8_t activity_dp_{111};    // DP111 = fast run-counter while cleaning
+  int activity_threshold_{16};  // min DP111 advance between polls to count as "moving"
+  uint32_t cleaning_timeout_ms_{360000};  // 6 min with no activity -> not cleaning
+  int last_battery_{-1};
+  long last_activity_val_{-1};
+  uint32_t last_activity_ms_{0};
+  bool cleaning_state_{false};
+  bool charging_{false};
 };
 
 }  // namespace wybot_bridge

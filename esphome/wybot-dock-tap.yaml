@@ -1,0 +1,74 @@
+# Transparent UART0 tap for the WyBot DS20 dock's ESP32-C3.
+#
+# Static RE of the stock C3 image proved the MCU link is UART0 @ 115200 8N1 on GPIO21(C3 TX ->
+# MCU RX) / GPIO20(C3 RX <- MCU TX), framed AA 55 00 <cmd> <len_lo> <len_hi> <payload> <cksum8>
+# (cksum = sum of all preceding bytes & 0xFF). The MCU is a slave: it idles its TX high and only
+# replies when polled, which is why passive scanning saw nothing.
+#
+# This image makes the dock a dumb, transparent pipe so the protocol can be driven from the Mac
+# over the native API (no reflash per experiment): every RX/TX byte is hex-logged, and the `tx`
+# API action injects an arbitrary byte sequence onto UART0. The logger is moved OFF the hardware
+# UART (baud_rate: 0) so it can't fight the bridge for UART0; logs still stream over the API.
+#
+# Same name/secrets as the other images so the HA entry, mDNS and API key stay continuous.
+
+esphome:
+  name: wybot-dock
+  friendly_name: WyBot Dock (uart tap)
+
+esp32:
+  variant: esp32c3
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  output_power: 8.5dB
+  ap:
+    ssid: "WyBot-Dock Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+logger:
+  level: VERBOSE
+  baud_rate: 0          # free UART0 from the console logger; logs still go over the API
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    # Inject raw bytes onto UART0. Drive this from Python: build the AA55 frame + checksum there,
+    # pass the bytes as an int array.
+    - action: tx
+      variables:
+        data: int[]
+      then:
+        - uart.write:
+            id: mcu
+            data: !lambda "return std::vector<uint8_t>(data.begin(), data.end());"
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+uart:
+  id: mcu
+  tx_pin: GPIO21        # C3 TX -> MCU RX  (from stock uart_set_pin: tx=0x15=21)
+  rx_pin: GPIO20        # C3 RX <- MCU TX  (rx=0x14=20); idles high = MCU alive
+  baud_rate: 115200     # stock uart_param_config: 0x1c200 = 115200, 8N1
+  rx_buffer_size: 2048
+  debug:
+    direction: BOTH
+    dummy_receiver: true          # drain + log RX even though nothing parses it on-device
+    after:
+      bytes: 128
+      timeout: 15ms
+    sequence:
+      - lambda: UARTDebug::log_hex(direction, bytes, ' ');
+
+sensor:
+  - platform: uptime
+    name: Uptime

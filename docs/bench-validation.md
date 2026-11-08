@@ -50,8 +50,8 @@ With real creds in `secrets.yaml`, the Super Mini was flashed over USB and:
   against a plain WPA2/CCMP 2.4 GHz SSID (verified from the UDM: `wpa3_support:false`,
   `pmf_mode:disabled`, `mac_filter_enabled:false` — none of which would block it). Root
   cause is the ESP32-C3 "Super Mini" clone browning out / distorting TX at the default
-  20 dBm on its PCB antenna, which corrupts the WPA2 handshake. Fix (same as Daniel's
-  water-softener C3): **`wifi: output_power: 8.5dB`**. After that it associated cleanly —
+  20 dBm on its PCB antenna, which corrupts the WPA2 handshake. Fix (a known ESP32-C3
+  Super Mini clone workaround): **`wifi: output_power: 8.5dB`**. After that it associated cleanly —
   UniFi shows it online, authorized, satisfaction 100%, ~-71 dBm. The real dock's module
   may tolerate more power, but 8.5 dB is the known-good value for this board.
 - **Forward ESPHome OTA over WiFi works.** `esphome upload --device <ip>` → "OTA

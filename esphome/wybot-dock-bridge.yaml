@@ -1,0 +1,236 @@
+# FUNCTIONAL image for the WyBot DS20 solar dock's ESP32-C3: local, cloud-free control of the
+# S2 Pro robot + solar dock, mirroring the WYBOT app / hass-wybot integration.
+#
+# Protocol (RE'd from the stock C3 image, confirmed live, full writeup in the project memory):
+#   UART0 115200 8N1, GPIO21 TX / GPIO20 RX. Frame AA 55 00 cmd plen(LE) payload cksum(sum&0xFF).
+#   cmd 0x00 heartbeat, 0x09 query DP, 0x04 write DP; MCU replies 0x05 DP report.
+#   DP report entry = dp_id(1) type(1) len(1) data[len]; int data little-endian.
+# DP semantics (pywybot + APK RE):
+#   DP0  cleaning status (01 stopped / 02 returning / 03 cleaning / 04 returning-to-dock) ; WRITE 03 start, 01 stop
+#   DP1  cleaning mode enum 0..6 (Floor/Wall/Wall Then Floor/Advanced Full Pool/Water Line/Turbo Floor/Eco Floor)
+#   DP11 return-to-dock (WRITE 01) ; DP50 battery [charge_state][robot_batt%] charge_state 0 unplugged/1 charging/2 charged
+#   DP209 device status ; DP212 connected ; DP213 docked ; DP214 dock type (5=solar) ; DP221 solar dock battery (byte1=%)
+
+esphome:
+  name: wybot-dock
+  friendly_name: WyBot Dock
+
+esp32:
+  variant: esp32c3
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  output_power: 8.5dB
+  ap:
+    ssid: "WyBot-Dock Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+logger:
+  level: INFO
+  baud_rate: 0          # free UART0 for the bridge; logs go over the API
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    - action: query_dp
+      variables:
+        dp: int
+      then: [ lambda: "id(bridge).query_dp((uint8_t) dp);" ]
+    - action: write_bool
+      variables:
+        dp: int
+        value: bool
+      then: [ lambda: "id(bridge).write_bool((uint8_t) dp, value);" ]
+    - action: write_enum
+      variables:
+        dp: int
+        value: int
+      then: [ lambda: "id(bridge).write_enum((uint8_t) dp, (uint8_t) value);" ]
+    - action: write_int
+      variables:
+        dp: int
+        value: int
+      then: [ lambda: "id(bridge).write_int((uint8_t) dp, (int32_t) value);" ]
+    - action: send_raw
+      variables:
+        data: int[]
+      then:
+        - lambda: |-
+            std::vector<uint8_t> v(data.begin(), data.end());
+            id(bridge).send_raw(v);
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+uart:
+  id: mcu
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 115200
+  rx_buffer_size: 2048
+
+wybot_bridge:
+  id: bridge
+  uart_id: mcu
+  heartbeat_interval: 2s
+  update_interval: 350ms
+  # Onboard "actually cleaning" detection (battery-drain + DP111 run-counter latch), so the dock
+  # reports cleaning correctly even though DP0 status goes stale once the robot leaves the dock.
+  cleaning:
+    name: "Cleaning"
+    device_class: running
+    icon: mdi:robot-vacuum
+  # battery_datapoint: 50, activity_datapoint: 111, activity_threshold: 16, cleaning_timeout: 6min (defaults)
+  numeric_datapoints:
+    # ---- robot battery / charge (DP50 = [charge_state][battery%]) ----
+    - { dp: 50, byte_offset: 1, byte_width: 1, name: "Robot Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0 }
+    - { dp: 50, byte_offset: 0, byte_width: 1, id: charge_state, name: "Robot Charge State", internal: true }
+    # ---- solar dock battery (DP221 = [flags][battery%][?]) ----
+    - { dp: 221, byte_offset: 1, byte_width: 1, name: "Solar Dock Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0 }
+    - { dp: 221, byte_offset: 0, byte_width: 1, id: dock_flags, name: "Dock Flags", internal: true }
+    # ---- hidden raw enums backing the select / text / binary entities ----
+    - { dp: 0,   id: status_raw,   name: "Cleaning Status Raw",  internal: true }
+    - { dp: 1,   id: mode_raw,     name: "Cleaning Mode Raw",    internal: true }
+    - { dp: 213, id: docked_raw,   name: "Docked Raw",           internal: true }
+    - { dp: 212, id: connected_raw, name: "Connected Raw",       internal: true }
+    - { dp: 214, id: docktype_raw, name: "Dock Type Raw",        internal: true }
+    # ---- diagnostics (meaning still being mapped) ----
+    - { dp: 209, name: "Device Status (DP209)",  entity_category: diagnostic }
+    - { dp: 54,  name: "DP54",   entity_category: diagnostic }
+    - { dp: 59,  name: "DP59",   entity_category: diagnostic }
+    - { dp: 65,  name: "DP65",   entity_category: diagnostic }
+    - { dp: 83,  name: "DP83",   entity_category: diagnostic }
+    - { dp: 111, name: "DP111",  entity_category: diagnostic }
+    - { dp: 116, name: "DP116",  entity_category: diagnostic }
+    - { dp: 120, name: "DP120",  entity_category: diagnostic }
+    - { dp: 205, name: "DP205",  entity_category: diagnostic }
+    - { dp: 210, name: "DP210",  entity_category: diagnostic }
+    - { dp: 211, name: "DP211",  entity_category: diagnostic }
+    - { dp: 216, name: "DP216",  entity_category: diagnostic }
+    - { dp: 217, name: "DP217",  entity_category: diagnostic }
+  text_datapoints:
+    - { dp: 79, name: "Schedule (DP79)", format: hex, entity_category: diagnostic }
+    - { dp: 13, name: "Status Bitmap (DP13)", format: hex, entity_category: diagnostic }
+    # raw battery words, to resolve byte semantics in daylight (DP50=[chg][robot%], DP221=[flags][?][?])
+    - { dp: 50,  name: "Battery Raw (DP50)", format: hex, entity_category: diagnostic }
+    - { dp: 221, name: "Solar Dock Battery Raw (DP221)", format: hex, entity_category: diagnostic }
+
+# --- Cleaning mode (maps to the app's fan-speed / mode) ---
+select:
+  - platform: template
+    name: "Cleaning Mode"
+    id: cleaning_mode
+    icon: mdi:broom
+    optimistic: false
+    update_interval: 3s
+    options:
+      - "Floor"
+      - "Wall"
+      - "Wall Then Floor"
+      - "Advanced Full Pool"
+      - "Water Line"
+      - "Turbo Floor"
+      - "Eco Floor"
+    lambda: |-
+      if (isnan(id(mode_raw).state)) return {};
+      int v = (int) id(mode_raw).state;
+      static const char *const M[] = {"Floor","Wall","Wall Then Floor","Advanced Full Pool","Water Line","Turbo Floor","Eco Floor"};
+      if (v >= 0 && v < 7) return std::string(M[v]);
+      return {};
+    set_action:
+      - lambda: |-
+          const auto &opts = id(cleaning_mode).traits.get_options();
+          for (size_t i = 0; i < opts.size(); i++)
+            if (opts[i] == x) { id(bridge).write_enum(1, (uint8_t) i); break; }
+
+# --- Robot commands (equivalent to the app's start / stop / return-to-dock) ---
+button:
+  - platform: template
+    name: "Start Cleaning"
+    icon: mdi:play
+    on_press:
+      - lambda: "id(bridge).write_enum(0, 0x03);"
+  - platform: template
+    name: "Stop Cleaning"
+    icon: mdi:stop
+    on_press:
+      - lambda: "id(bridge).write_enum(0, 0x01);"
+  - platform: template
+    name: "Return to Dock"
+    icon: mdi:home-import-outline
+    on_press:
+      - lambda: "id(bridge).write_enum(11, 0x01);"
+
+binary_sensor:
+  - platform: template
+    name: "Robot Charging"
+    device_class: battery_charging
+    lambda: |-
+      if (isnan(id(charge_state).state)) return {};
+      return ((int) id(charge_state).state) == 1;
+  - platform: template
+    name: "Docked"
+    device_class: connectivity
+    lambda: |-
+      if (isnan(id(docked_raw).state)) return {};
+      return ((int) id(docked_raw).state) == 1;
+  - platform: template
+    name: "Robot Connected"
+    device_class: connectivity
+    lambda: |-
+      if (isnan(id(connected_raw).state)) return {};
+      return ((int) id(connected_raw).state) == 1;
+  # NOTE: "Cleaning" is now a native binary_sensor owned by the wybot_bridge component (see the
+  # `cleaning:` key above) using battery-drain + DP111 detection. The old DP0-status template below
+  # was removed because DP0 under-reports "stopped" once the robot leaves the dock.
+
+text_sensor:
+  - platform: template
+    name: "Cleaning Status"
+    icon: mdi:robot-vacuum
+    lambda: |-
+      if (isnan(id(status_raw).state)) return {};
+      switch ((int) id(status_raw).state) {
+        case 1: return std::string("Stopped");
+        case 2: return std::string("Returning");
+        case 3: return std::string("Cleaning");
+        case 4: return std::string("Returning to dock");
+        case 15: return std::string("Unknown");
+        case 255: return std::string("Starting");
+        default: return std::string("Other");
+      }
+    update_interval: 2s
+  - platform: template
+    name: "Dock Type"
+    icon: mdi:home-lightning-bolt
+    lambda: |-
+      if (isnan(id(docktype_raw).state)) return {};
+      switch ((int) id(docktype_raw).state) {
+        case 0: return std::string("Unknown");
+        case 1: return std::string("Standard");
+        case 5: return std::string("Solar");
+        default: return std::string("Type ") + std::to_string((int) id(docktype_raw).state);
+      }
+    update_interval: 5s
+
+sensor:
+  - platform: uptime
+    name: Uptime
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+    entity_category: diagnostic

@@ -1,0 +1,52 @@
+# WyBot Pool Robot - local ESPHome bridge native vacuum entity (added 2026-11-08).
+# Modern template integration (the legacy `vacuum: platform: template` format was removed).
+# Wraps the local "WyBot Dock" ESPHome entities so the robot has the same start/stop/return/mode
+# controls the WYBOT app had, fully local (no cloud).
+#
+# "Actually cleaning" detection now lives IN THE DOCK FIRMWARE (wybot_bridge component ->
+# binary_sensor.wybot_dock_cleaning), derived from battery-drain + the DP111 run-counter, because the
+# dock's DP0 status under-reports "stopped" once the robot leaves the dock. The old HA trigger-based
+# template helper was retired in favor of that single on-device source of truth.
+template:
+  - vacuum:
+      name: "WyBot Pool Robot"
+      unique_id: wybot_pool_robot
+      # Priority avoids the flickery docked/DP0 signals:
+      #   charging on                  -> docked (unfakeable: charge only flows on the dock)
+      #   firmware cleaning sensor on   -> cleaning (battery-drain / run-counter, on-device)
+      #   DP0 says returning            -> returning
+      #   battery full, not cleaning    -> docked (parked, fully charged)
+      #   else                          -> idle
+      state: >-
+        {{ 'docked' if is_state('binary_sensor.wybot_dock_robot_charging','on')
+           else 'cleaning' if is_state('binary_sensor.wybot_dock_cleaning','on')
+           else 'returning' if states('sensor.wybot_dock_cleaning_status') in ['Returning','Returning to dock']
+           else 'docked' if states('sensor.wybot_dock_robot_battery')|int(0) >= 99
+           else 'idle' }}
+      fan_speed: "{{ states('select.wybot_dock_cleaning_mode') }}"
+      fan_speeds:
+        - Floor
+        - Wall
+        - Wall Then Floor
+        - Advanced Full Pool
+        - Water Line
+        - Turbo Floor
+        - Eco Floor
+      start:
+        - action: button.press
+          target:
+            entity_id: button.wybot_dock_start_cleaning
+      stop:
+        - action: button.press
+          target:
+            entity_id: button.wybot_dock_stop_cleaning
+      return_to_base:
+        - action: button.press
+          target:
+            entity_id: button.wybot_dock_return_to_dock
+      set_fan_speed:
+        - action: select.select_option
+          target:
+            entity_id: select.wybot_dock_cleaning_mode
+          data:
+            option: "{{ fan_speed }}"

@@ -1,3 +1,6 @@
+> **SUPERSEDED (2026-11-07):** confirmed on the real dock. The MCU link is UART0 @115200 on
+> GPIO21(TX)/GPIO20(RX), framing `AA 55 00 cmd plen(LE) payload cksum`. See `protocol-confirmed.md`.
+
 # Finding the C3 ↔ GD32 motor-MCU UART pins
 
 The dock's ESP32-C3 talks to the GD32 motor MCU over a UART whose GPIOs are not yet known.

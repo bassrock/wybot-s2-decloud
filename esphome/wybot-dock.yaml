@@ -29,7 +29,7 @@ wifi:
   # ESP32-C3 "Super Mini" clones brown out / distort TX at the default 20dBm on their cheap PCB
   # antenna, which corrupts the WPA2 handshake (symptom: repeated reason='Auth Expired'). 8.5dB is
   # the known-good value for the bench board. Safe for the real dock too: at full stock power it
-  # reports -44 dBm / 51 dB SNR / 86% to AP 94:2a:6f:5a:a9:e0 (UniFi, 2026-11-07), so -11.5 dB still
+  # reports -44 dBm / 51 dB SNR / 86% to the AP, so -11.5 dB still
   # lands ~-55 dBm, ~23 dB above the -67 dBm line. Raise toward 15dB only if a future check shows it
   # weak; output_power can't be changed over the air if the dock never associates.
   output_power: 8.5dB
