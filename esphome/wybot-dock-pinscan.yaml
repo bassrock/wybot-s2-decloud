@@ -1,0 +1,58 @@
+# UART pin-finder image for the WyBot DS20 dock's ESP32-C3-MINI-1.
+#
+# Flash this (over ESPHome OTA, after the stage-1 takeover) when you need to discover which
+# GPIOs carry the C3<->GD32 motor-MCU UART. It listens passively on UART1 across candidate
+# GPIOs x bauds and logs which pin/baud carries Tuya AA55 DP frames (that pin is the C3 RX).
+# It also hex-dumps what it hears, so framing/baud/DP ids are captured at the same time.
+# Watch the logs (`esphome logs wybot-dock-pinscan.yaml --device <dock-ip>`) for '** HIT **'.
+#
+# Once RX+baud are known, set them in wybot-dock.yaml's uart: block, enable the wybot_bridge,
+# and confirm TX by sending a DP query and watching for a reply.
+
+esphome:
+  name: wybot-dock-pinscan
+  friendly_name: WyBot Dock PinScan
+
+esp32:
+  variant: esp32c3
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  output_power: 8.5dB   # ESP32-C3 Super Mini RF fix (see wybot-dock.yaml)
+  ap:
+    ssid: "WyBot-Dock Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+logger:
+  level: DEBUG   # want the per-window RX dumps
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+# No `uart:` component here: wybot_pinscan drives UART1 directly so it can re-point the RX
+# pin at runtime. The logger uses USB-CDC/UART0, so UART1 is free.
+wybot_pinscan:
+  uart_num: 1
+  candidate_pins: [0, 1, 3, 4, 5, 6, 7, 10]
+  bauds: [115200]        # add 9600, 57600, 230400 here if 115200 finds nothing
+  dwell_ms: 4000         # listen this long per (pin, baud) before moving on
+
+sensor:
+  - platform: uptime
+    name: Uptime

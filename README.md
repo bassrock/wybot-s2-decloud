@@ -41,7 +41,7 @@ esphome/     custom replacement firmware for the ESP32-C3 (work in progress)
 - [x] Bench-validate on a spare C3: image boots, DP-bridge firmware compiles+runs, chip-rev compatible ([`docs/bench-validation.md`](docs/bench-validation.md))
 - [ ] Confirm the `recv_start_update` envelope via one passive capture on the real dock
 - [x] Rehearse ESPHome stage-2 OTA on the bench: C3 joins WiFi (needs `output_power: 8.5dB`), forward OTA over WiFi = "OTA successful", stock image transfers through ESPHome OTA (rejected only by `esp_ota_end` chip-rev on the rev-1.1 bench; real dock passes) ([`docs/bench-validation.md`](docs/bench-validation.md))
-- [ ] Discover the C3<->MCU UART pins (in-software GPIO scan on the dock, or logic analyzer)
+- [~] Discover the C3<->MCU UART pins: static RE confirms **UART1**, sig idx 9, inline-register routing (exact GPIO needs a Ghidra dataflow pass); deterministic path = `esphome/wybot-dock-pinscan.yaml` scanner (built, ready) — see [`docs/uart-pins.md`](docs/uart-pins.md)
 - [ ] Flash the dock via OTA, then iterate via ESPHome OTA
 - [x] Confirm the takeover is **reversible**: ESPHome OTA can flash the stock image back (no sig/identity/downgrade gate in the build; stock image passes `esp_ota_end`), see [`docs/ota-flashing.md`](docs/ota-flashing.md#reverting-to-stock-esphome-ota-no-teardown--the-takeover-is-reversible)
 
