@@ -1,3 +1,6 @@
+> **SUPERSEDED (2026-11-07):** confirmed on the real dock. The MCU link is UART0 @115200 on
+> GPIO21(TX)/GPIO20(RX), framing `AA 55 00 cmd plen(LE) payload cksum`. See `protocol-confirmed.md`.
+
 # Comms protocol (datapoint / DP)
 
 The ESP32-C3 gateway relays **Tuya-style datapoint (DP) frames** between the app/cloud and the GD32 motor MCU. The same DP set appears on three transports: MQTT (JSON), BLE (binary), and the internal C3<->MCU UART (binary, inferred). This is what local replacement firmware must speak.

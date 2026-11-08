@@ -1,0 +1,75 @@
+# Example Home Assistant automations for the local WyBot dock (copy into your automations.yaml).
+# They use the ESPHome entity ids produced by esphome/wybot-dock-bridge.yaml (device name "WyBot
+# Dock"). Both are anchored on signals the dock reports RELIABLY even when its DP0 status datapoint
+# goes stale once the robot leaves the dock:
+#   - battery > 99  == "docked and fully charged" (the robot can only reach 100% on the dock)
+#   - charging == off == "not on the dock" (charge current only flows while seated; a stale status
+#     cannot fake it)
+# See docs/protocol-confirmed.md for why the docked / DP0 signals flicker and must not be trusted.
+
+- id: wybot_clean_pool
+  alias: Clean Pool
+  description: Start a cleaning run on a schedule, but only from a full charge on the dock.
+  triggers:
+    - { at: "07:00:00", trigger: time }
+    - { at: "12:00:00", trigger: time }
+    - { at: "17:00:00", trigger: time }
+  conditions:
+    - condition: numeric_state
+      entity_id: sensor.wybot_dock_robot_battery
+      above: 99   # full charge == parked on the dock; drains the instant it leaves
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: sensor.wybot_dock_cleaning_status
+          state: [Cleaning, Starting]
+  actions:
+    - action: vacuum.start
+      target: { entity_id: vacuum.wybot_pool_robot }
+  mode: single
+
+- id: wybot_low_battery_return_home
+  alias: Wybot Low Battery Return Home
+  description: Send the robot back to its dock when the battery drops below 40% while it is out.
+  triggers:
+    - trigger: numeric_state       # no 'for:' -- the sensor flicks to unavailable while submerged
+      entity_id: sensor.wybot_dock_robot_battery
+      below: 40
+      id: battery_dropped
+    - trigger: time_pattern        # safety net: a frozen sensor can miss the crossing
+      minutes: "/5"
+      id: safety_net
+  conditions:
+    - condition: numeric_state
+      entity_id: sensor.wybot_dock_robot_battery
+      below: 40   # non-numeric (unavailable/unknown) fails this, which is what we want
+    - condition: state
+      entity_id: binary_sensor.wybot_dock_robot_charging
+      state: "off"   # charge only flows on the dock -> the one signal a stale status cannot fake
+    - condition: template
+      value_template: >
+        {{ now().timestamp() - as_timestamp(state_attr('automation.wybot_low_battery_return_home',
+           'last_triggered'), 0) > 900 }}   # 15-min cooldown so the safety net can't loop
+  actions:
+    - action: vacuum.return_to_base
+      target: { entity_id: vacuum.wybot_pool_robot }
+    - wait_for_trigger:
+        - trigger: state
+          entity_id: binary_sensor.wybot_dock_robot_charging
+          to: "on"   # charging turning on is the only trustworthy "it made it home" signal
+      timeout: "00:05:00"
+      continue_on_timeout: true
+    - if:
+        - condition: template
+          value_template: "{{ not wait.completed }}"
+        - condition: state
+          entity_id: binary_sensor.wybot_dock_robot_charging
+          state: "off"
+      then:
+        - action: vacuum.stop
+          target: { entity_id: vacuum.wybot_pool_robot }
+        - delay: { seconds: 5 }
+        - action: vacuum.return_to_base
+          target: { entity_id: vacuum.wybot_pool_robot }
+  mode: single
+  max_exceeded: silent

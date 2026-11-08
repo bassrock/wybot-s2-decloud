@@ -1,13 +1,16 @@
 # ESPHome firmware for the WyBot DS20 dock's ESP32-C3-MINI-1.
 #
-# Stage-1 image: the goal of THIS build is only to boot cleanly and get on WiFi so that
-# ESPHome's own OTA takes over for everything after. The UART bridge to the GD32 motor MCU
-# is intentionally NOT wired yet (pins unknown until discovered in-software or on teardown).
+# As written this is the CONNECTIVITY-ONLY image: WiFi + native API + ESPHome OTA, and it drives
+# NO GPIO. That is deliberate. The dock's C3<->GD32 UART pins are not known yet, and the stock
+# OTA path has no rollback, so the first custom image must not route/drive any pin onto an unknown
+# net. Discover the pins first with wybot-dock-pinscan.yaml, then uncomment + fill the `uart:` /
+# `wybot_bridge:` / API-action blocks at the bottom with the real tx/rx/baud to make the functional
+# image, and OTA that.
 #
-# It is pushed onto the dock the first time via WyBot's own (unsigned, md5-only) OTA channel.
-# Because the stock bootloader has no secure boot and no app-rollback, this first image MUST
-# be known-good: flash this exact binary to a spare ESP32-C3-MINI-1 over USB and confirm it
-# boots + joins WiFi BEFORE OTA-pushing it to the dock.
+# Pushed onto the dock the first time via WyBot's own (unsigned, md5-only) OTA channel. Because the
+# stock bootloader has no secure boot and no app-rollback, this first image MUST be known-good:
+# flash this exact binary to a spare ESP32-C3-MINI-1 over USB and confirm it boots + joins WiFi
+# BEFORE OTA-pushing it to the dock.
 
 esphome:
   name: wybot-dock
@@ -23,14 +26,13 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  # ESP32-C3 "Super Mini" clones brown out / distort the TX at the default 20dBm on
-  # their cheap PCB antenna, which corrupts the WPA2 auth handshake (symptom:
-  # repeated reason='Auth Expired' on a plain WPA2 net). Daniel's water-softener C3
-  # (same board) runs stable at 8.5dB. The real dock's module may tolerate more, but
-  # 8.5dB is the known-good value for this hardware. (bench)
+  # ESP32-C3 "Super Mini" clones brown out / distort TX at the default 20dBm on their cheap PCB
+  # antenna, which corrupts the WPA2 handshake (symptom: repeated reason='Auth Expired'). 8.5dB is
+  # the known-good value for the bench board. Safe for the real dock too: at full stock power it
+  # reports -44 dBm / 51 dB SNR / 86% to the AP, so -11.5 dB still
+  # lands ~-55 dBm, ~23 dB above the -67 dBm line. Raise toward 15dB only if a future check shows it
+  # weak; output_power can't be changed over the air if the dock never associates.
   output_power: 8.5dB
-  # Fallback AP + captive portal: if the home WiFi can't be joined, the dock still comes up
-  # reachable, which removes the "booted but unreachable" failure mode.
   ap:
     ssid: "WyBot-Dock Setup"
     password: !secret fallback_ap_password
@@ -44,52 +46,12 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
-  # HA services to drive the robot via the DP bridge (names appear as esphome.wybot_dock_*)
-  actions:
-    - action: start_clean
-      then:
-        - lambda: "id(bridge).start_clean();"
-    - action: stop_clean
-      then:
-        - lambda: "id(bridge).stop_clean();"
-    - action: set_mode
-      variables:
-        mode: int
-      then:
-        - lambda: "id(bridge).set_mode((uint8_t) mode);"
-    - action: query_dp
-      variables:
-        dp: int
-      then:
-        - lambda: "id(bridge).query((uint8_t) dp);"
 
 ota:
   - platform: esphome
     password: !secret ota_password
 
-# --- the DP bridge (real dock firmware) ---
-external_components:
-  - source:
-      type: local
-      path: components
-
-# UART to the GD32 motor MCU. On the DOCK these pins are unknown until discovered (GPIO scan
-# or logic analyzer); the values below are bench placeholders for the Super Mini so it compiles
-# and runs. Nothing is attached on the bench, so no frames flow, but the stack initializes.
-uart:
-  id: mcu_uart
-  tx_pin: GPIO4
-  rx_pin: GPIO5
-  baud_rate: 115200
-
-wybot_bridge:
-  id: bridge
-  uart_id: mcu_uart
-  status_text_sensor:
-    name: WyBot Last Frame
-
-# --- liveness: on-board status so we can confirm it's alive ---
-# ESP32-C3-MINI-1 has no user LED by default; expose uptime + wifi signal instead.
+# --- liveness ---
 sensor:
   - platform: uptime
     name: Uptime
@@ -97,12 +59,35 @@ sensor:
     name: WiFi Signal
     update_interval: 60s
 
-# --- NEXT (do not enable until the C3<->GD32 UART pins are known) ---
-# uart:
-#   id: mcu
-#   tx_pin: GPIOxx     # discover in-software (GPIO scan) or with a logic analyzer on teardown
-#   rx_pin: GPIOxx
-#   baud_rate: 115200  # confirm; stock bridge drives UART via HAL directly
+# ===========================================================================================
+# STAGE 2 (fill in after the pin scan; do NOT enable with guessed pins -- a wrong tx_pin routes
+# U1TXD as a push-pull output onto an unknown net on the no-rollback stock image):
 #
-# Then a custom component re-emits the AA55-framed datapoint (DP) writes/queries documented
-# in ../docs/protocol.md, exposed as HA entities (start/stop, mode, return-to-dock, status).
+# external_components:
+#   - source: { type: local, path: components }
+#
+# uart:
+#   id: mcu_uart
+#   tx_pin: GPIO??       # from wybot-dock-pinscan.yaml (TX confirmed, not guessed)
+#   rx_pin: GPIO??       # the '** HIT **' pin
+#   baud_rate: 115200    # the baud that produced the AA55 hit
+#
+# wybot_bridge:
+#   id: bridge
+#   uart_id: mcu_uart
+#   status_text_sensor:
+#     name: WyBot Last Frame
+#
+# api:
+#   actions:
+#     - action: start_clean
+#       then: [ lambda: "id(bridge).start_clean();" ]
+#     - action: stop_clean
+#       then: [ lambda: "id(bridge).stop_clean();" ]
+#     - action: set_mode
+#       variables: { mode: int }
+#       then: [ lambda: "id(bridge).set_mode((uint8_t) mode);" ]
+#     - action: query_dp
+#       variables: { dp: int }
+#       then: [ lambda: "id(bridge).query((uint8_t) dp);" ]
+# ===========================================================================================

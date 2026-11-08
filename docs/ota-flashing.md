@@ -106,9 +106,17 @@ boot partition, and the dock boots **stock** — fully reversible, air-gapped.
 Do it with `scripts/esphome_revert_to_stock.sh <dock-ip> <stock.bin>`: it swaps
 the stock image in as ESPHome's OTA payload (`esphome upload` has no `--file`
 flag) and pushes it. Reverting drops you back onto WyBot's firmware + cloud; you
-re-take-over via the stage-1 WyBot OTA path again if wanted. Keep `USE_OTA_ROLLBACK`
-(present) so a bad flash is recoverable, and keep the stock `.bin` (md5
-`422b804420b90ce6cbe5b96eab588887`) as the known-good revert target.
+re-take-over via the stage-1 WyBot OTA path again if wanted.
+
+Recovery does **not** come from `USE_OTA_ROLLBACK`. That define is present in the
+ESPHome build, but automatic bootloader rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`)
+is **off** in the default ESPHome sdkconfig, so nothing arms a rollback here; and if
+it were on it would be a hazard, since a reverted **stock** image never calls
+`esp_ota_mark_app_valid_cancel_rollback()` and would be rolled straight back off on
+the next reboot. The actual safety net is the **two-slot layout**: the image you are
+not running stays intact in the other OTA slot, so `boot_other_slot` (API action) flips
+the boot partition back with zero upload. Keep the stock `.bin` (md5
+`422b804420b90ce6cbe5b96eab588887`) as the known-good revert target for a full re-flash.
 
 ### Why the full round-trip can't be *booted* on the bench
 On the Super Mini (chip rev **1.1**) ESPHome OTA still **accepts and writes** the

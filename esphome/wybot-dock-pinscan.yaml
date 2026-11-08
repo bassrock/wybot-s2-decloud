@@ -1,17 +1,20 @@
 # UART pin-finder image for the WyBot DS20 dock's ESP32-C3-MINI-1.
 #
-# Flash this (over ESPHome OTA, after the stage-1 takeover) when you need to discover which
-# GPIOs carry the C3<->GD32 motor-MCU UART. It listens passively on UART1 across candidate
-# GPIOs x bauds and logs which pin/baud carries Tuya AA55 DP frames (that pin is the C3 RX).
-# It also hex-dumps what it hears, so framing/baud/DP ids are captured at the same time.
-# Watch the logs (`esphome logs wybot-dock-pinscan.yaml --device <dock-ip>`) for '** HIT **'.
+# This is ALSO the safe stage-1 takeover image: on boot it is pure connectivity (WiFi + API + OTA)
+# and touches NO GPIO. Probing only starts once you turn on the "Pin scan enabled" switch AND an
+# API/HA client is connected (so the sealed dock first proves it is reachable, and scanning stops
+# the instant you disconnect). The scan listens passively on UART1 (TX is never driven) across
+# candidate GPIOs x bauds and logs which pin/baud carries Tuya AA55 DP frames (= the C3 RX), while
+# hex-dumping traffic so framing/baud/DP ids are captured too.
 #
-# Once RX+baud are known, set them in wybot-dock.yaml's uart: block, enable the wybot_bridge,
-# and confirm TX by sending a DP query and watching for a reply.
+#   esphome run esphome/wybot-dock-pinscan.yaml --device <dock-ip>   # watch for '** HIT **'
+#
+# Same `name:` (wybot-dock) and secrets as wybot-dock.yaml on purpose: the HA entry, mDNS address
+# and API key stay continuous as you OTA between the scanner and the functional image.
 
 esphome:
-  name: wybot-dock-pinscan
-  friendly_name: WyBot Dock PinScan
+  name: wybot-dock
+  friendly_name: WyBot Dock (pinscan)
 
 esp32:
   variant: esp32c3
@@ -22,7 +25,8 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  output_power: 8.5dB   # ESP32-C3 Super Mini RF fix (see wybot-dock.yaml)
+  output_power: 8.5dB   # ESP32-C3 RF fix; safe for the real dock (-44 dBm full-power/86% in UniFi,
+                        # so -11.5 dB still ~-55 dBm). Raise toward 15dB only if a later check is weak.
   ap:
     ssid: "WyBot-Dock Setup"
     password: !secret fallback_ap_password
@@ -35,6 +39,11 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
+  actions:
+    # Zero-upload escape hatch: boot the OTHER app slot (= stock, right after the stage-1 takeover).
+    - action: boot_other_slot
+      then:
+        - lambda: "id(pinscan).boot_other_slot();"
 
 ota:
   - platform: esphome
@@ -45,13 +54,27 @@ external_components:
       type: local
       path: components
 
-# No `uart:` component here: wybot_pinscan drives UART1 directly so it can re-point the RX
-# pin at runtime. The logger uses USB-CDC/UART0, so UART1 is free.
+# No `uart:` component here: wybot_pinscan drives UART1 directly so it can re-point RX at runtime.
 wybot_pinscan:
+  id: pinscan
   uart_num: 1
-  candidate_pins: [0, 1, 3, 4, 5, 6, 7, 10]
-  bauds: [115200]        # add 9600, 57600, 230400 here if 115200 finds nothing
-  dwell_ms: 4000         # listen this long per (pin, baud) before moving on
+  # WIDE pass: every probe-safe GPIO incl. strapping (2/8/9) and the free UART0 pins (20/21),
+  # since the first 115200-only pass over [0,1,3,4,5,6,7,10] found 0 bytes everywhere.
+  candidate_pins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21]
+  bauds: [9600, 115200]   # 9600 FIRST: it's the Tuya default and the likely real link rate
+  dwell_ms: 16000         # >1 typical 15s MCU heartbeat, so a slow unsolicited frame can't be missed
+
+# Arm switch: probing is OFF until this is turned on (and never runs unless an API client is
+# connected). Always boots OFF so a reset can't start a scan unattended.
+switch:
+  - platform: template
+    name: "Pin scan enabled"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: "id(pinscan).set_enabled(true);"
+    turn_off_action:
+      - lambda: "id(pinscan).set_enabled(false);"
 
 sensor:
   - platform: uptime
