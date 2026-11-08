@@ -1,0 +1,63 @@
+# ESPHome firmware for the WyBot DS20 dock's ESP32-C3-MINI-1.
+#
+# Stage-1 image: the goal of THIS build is only to boot cleanly and get on WiFi so that
+# ESPHome's own OTA takes over for everything after. The UART bridge to the GD32 motor MCU
+# is intentionally NOT wired yet (pins unknown until discovered in-software or on teardown).
+#
+# It is pushed onto the dock the first time via WyBot's own (unsigned, md5-only) OTA channel.
+# Because the stock bootloader has no secure boot and no app-rollback, this first image MUST
+# be known-good: flash this exact binary to a spare ESP32-C3-MINI-1 over USB and confirm it
+# boots + joins WiFi BEFORE OTA-pushing it to the dock.
+
+esphome:
+  name: wybot-dock
+  friendly_name: WyBot Dock
+
+esp32:
+  variant: esp32c3
+  board: esp32-c3-devkitm-1   # ESP32-C3-MINI-1, 4MB
+  framework:
+    type: esp-idf            # match the stock stack; best control on C3
+
+# --- connectivity ---
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback AP + captive portal: if the home WiFi can't be joined, the dock still comes up
+  # reachable, which removes the "booted but unreachable" failure mode.
+  ap:
+    ssid: "WyBot-Dock Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# --- management ---
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# --- liveness: on-board status so we can confirm it's alive ---
+# ESP32-C3-MINI-1 has no user LED by default; expose uptime + wifi signal instead.
+sensor:
+  - platform: uptime
+    name: Uptime
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+
+# --- NEXT (do not enable until the C3<->GD32 UART pins are known) ---
+# uart:
+#   id: mcu
+#   tx_pin: GPIOxx     # discover in-software (GPIO scan) or with a logic analyzer on teardown
+#   rx_pin: GPIOxx
+#   baud_rate: 115200  # confirm; stock bridge drives UART via HAL directly
+#
+# Then a custom component re-emits the AA55-framed datapoint (DP) writes/queries documented
+# in ../docs/protocol.md, exposed as HA entities (start/stop, mode, return-to-dock, status).

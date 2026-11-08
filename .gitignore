@@ -10,3 +10,9 @@ secrets.env
 # Ghidra projects
 *.rep
 *.gpr
+esphome/secrets.yaml
+# ESPHome build artifacts
+esphome/.esphome/
+esphome/.pioenvs/
+esphome/.piolibdeps/
+esphome/build/
