@@ -38,6 +38,32 @@ reflashed over UART.** Therefore stage 1 must use a *known-good* image:
   bootloader loading the app segments (table-independent). Lowest-risk, but the reason pre-validation
   can't be 100% identical (the spare module uses ESPHome's own table).
 
+### The `recv_start_update` message (schema)
+Topic: `/device/OTA/recv_start_update/{dockId}` (published app/cloud → device).
+
+Field schema is **known with high confidence** from the live `reply_all_firmware_info` catalog
+(same fields the cloud serves) and from the device's own cJSON key strings confirmed in the stock
+image (`boardID`, `url`, `softwareVer`, `hardwareVer`, `productModel`, `chipType`, `progress`, plus
+`md5` used by WyBot's own `iot_md5.c` verifier). A firmware entry looks like:
+
+```json
+{ "id":<int>, "boardID":"iot", "productModel":"DS20", "chipType":"",
+  "softwareVer":"2.2.20", "hardwareVer":"5.127.0",
+  "url":"http://<your-host>/firmware.ota.bin", "md5":"<hex>",
+  "target":"0.0.0", "dependency":"", "enforce":false, "manual":1 }
+```
+
+To flash our image we set `boardID":"iot"` (the C3), point `url` at our locally-hosted
+`firmware.ota.bin`, and set `md5` to its md5. The device downloads over plain HTTP, md5-verifies,
+and `esp_ota`-writes it.
+
+**One unknown — the envelope.** Whether the payload is the bare entry object, `{"firmware":[entry]}`,
+or a `{"ts":..,"cmd":..}`-wrapped form (as the `/device/DATA/*` messages use) is **not** resolved
+from the stripped RISC-V image (all OTA topic strings are `auipc`/`addi` PC-relative, which Ghidra
+doesn't recover on a raw import). This is confirmed cheaply by **one passive capture** of a real
+`recv_start_update` (see `scripts/ota_capture.py`) rather than deeper binary reversing. `scripts/ota_push.py`
+supports all three envelope forms via `--envelope`.
+
 ## Stage 2 — ESPHome OTA forever after
 Once ESPHome is running, update it from the ESPHome dashboard / `esphome run` like any ESP device.
 No cloud, no teardown, no WyBot OTA. This is the end state "flash OTA via ESPHome."
