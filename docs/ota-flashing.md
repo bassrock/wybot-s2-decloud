@@ -80,3 +80,44 @@ drives the robot locally. See `esphome/wybot-dock.yaml` and `protocol.md`.
 WyBot also has a **BLE OTA** path (`_BtOtaDockerUpgrade`, app streams the image in chunks). Same
 no-signature/no-rollback properties; more protocol to reverse than the MQTT path, so MQTT is the
 default. Kept as a fallback if the MQTT OTA proves awkward to trigger.
+
+## Reverting to stock (ESPHome OTA, no teardown) — the takeover is reversible
+
+Yes: once ESPHome is on the dock, ESPHome's **own** OTA can flash the **stock
+WyBot image** back, over the air, with no teardown. Verified from the device-side
+OTA backend compiled into our build (`ota_backend_esp_idf.cpp`), not assumed:
+
+- This build defines **`USE_OTA`, `USE_OTA_DEFLATE`, `USE_OTA_ENCRYPTION`,
+  `USE_OTA_PASSWORD`, `USE_OTA_ROLLBACK`, `USE_OTA_VERSION`** — and **not**
+  `USE_OTA_SIGNED_VERIFICATION*`, **not** `USE_OTA_DOWNGRADE_PROTECTION`, **not**
+  `USE_OTA_PARTITIONS`.
+- So `IDFOTABackend::end()` reduces to: optional **md5** check → **`esp_ota_end()`**
+  → **`esp_ota_set_boot_partition()`**. No project-name / identity / version gate.
+- `esp_ota_end()` validates only that the payload is a valid ESP-IDF **app**
+  (header magic `0xE9` + the image's own appended SHA-256). It does **not** care
+  that the app isn't ESPHome.
+
+The stock `IOT_DS20_C3MINI...V2.2.20.bin` satisfies exactly that check: magic
+`0xE9`, `chip_id = 5` (ESP32-C3), `hash_appended = 1` with a **valid** appended
+SHA-256, `max_chip_rev_full = v0.99`. So on the **real dock** (chip rev between
+v0.3 and v0.99) ESPHome OTA accepts it, writes it to the inactive slot, flips the
+boot partition, and the dock boots **stock** — fully reversible, air-gapped.
+
+Do it with `scripts/esphome_revert_to_stock.sh <dock-ip> <stock.bin>`: it swaps
+the stock image in as ESPHome's OTA payload (`esphome upload` has no `--file`
+flag) and pushes it. Reverting drops you back onto WyBot's firmware + cloud; you
+re-take-over via the stage-1 WyBot OTA path again if wanted. Keep `USE_OTA_ROLLBACK`
+(present) so a bad flash is recoverable, and keep the stock `.bin` (md5
+`422b804420b90ce6cbe5b96eab588887`) as the known-good revert target.
+
+### Why the full round-trip can't be *booted* on the bench
+On the Super Mini (chip rev **1.1**) ESPHome OTA still **accepts and writes** the
+stock image (same `end()` path), but the UNPATCHED stock won't **boot** — the
+bootloader chip-rev lock requires `<= v0.99`. The maxrev-patched image boots far
+enough to hit the stock runtime hardware guard (`RTC_SW_SYS_RST` loop, see
+`bench-validation.md`). So the bench proves the **accept/write** half; **booting
+stock** can only be observed on the real dock. The accept/write half itself is now
+proven from source above, so a live bench write adds nothing the source doesn't
+already establish — the only thing a bench run needs that we don't have is real
+WiFi creds in `esphome/secrets.yaml` (ESPHome OTA is network-only; the Mac can't
+join the dock's fallback AP here without dropping its own default route).

@@ -43,6 +43,7 @@ esphome/     custom replacement firmware for the ESP32-C3 (work in progress)
 - [ ] Rehearse ESPHome stage-2 OTA on the bench (needs real WiFi creds)
 - [ ] Discover the C3<->MCU UART pins (in-software GPIO scan on the dock, or logic analyzer)
 - [ ] Flash the dock via OTA, then iterate via ESPHome OTA
+- [x] Confirm the takeover is **reversible**: ESPHome OTA can flash the stock image back (no sig/identity/downgrade gate in the build; stock image passes `esp_ota_end`), see [`docs/ota-flashing.md`](docs/ota-flashing.md#reverting-to-stock-esphome-ota-no-teardown--the-takeover-is-reversible)
 
 ## Legal / safety
 
