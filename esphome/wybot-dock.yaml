@@ -38,10 +38,49 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
+  # HA services to drive the robot via the DP bridge (names appear as esphome.wybot_dock_*)
+  actions:
+    - action: start_clean
+      then:
+        - lambda: "id(bridge).start_clean();"
+    - action: stop_clean
+      then:
+        - lambda: "id(bridge).stop_clean();"
+    - action: set_mode
+      variables:
+        mode: int
+      then:
+        - lambda: "id(bridge).set_mode((uint8_t) mode);"
+    - action: query_dp
+      variables:
+        dp: int
+      then:
+        - lambda: "id(bridge).query((uint8_t) dp);"
 
 ota:
   - platform: esphome
     password: !secret ota_password
+
+# --- the DP bridge (real dock firmware) ---
+external_components:
+  - source:
+      type: local
+      path: components
+
+# UART to the GD32 motor MCU. On the DOCK these pins are unknown until discovered (GPIO scan
+# or logic analyzer); the values below are bench placeholders for the Super Mini so it compiles
+# and runs. Nothing is attached on the bench, so no frames flow, but the stack initializes.
+uart:
+  id: mcu_uart
+  tx_pin: GPIO4
+  rx_pin: GPIO5
+  baud_rate: 115200
+
+wybot_bridge:
+  id: bridge
+  uart_id: mcu_uart
+  status_text_sensor:
+    name: WyBot Last Frame
 
 # --- liveness: on-board status so we can confirm it's alive ---
 # ESP32-C3-MINI-1 has no user LED by default; expose uptime + wifi signal instead.

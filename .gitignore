@@ -16,3 +16,5 @@ esphome/.esphome/
 esphome/.pioenvs/
 esphome/.piolibdeps/
 esphome/build/
+esphome/components/**/__pycache__/
+*.pyc

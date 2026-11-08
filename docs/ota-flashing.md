@@ -37,6 +37,9 @@ reflashed over UART.** Therefore stage 1 must use a *known-good* image:
   IDF reads the real table from flash at runtime, so ESPHome adapts; booting depends only on the
   bootloader loading the app segments (table-independent). Lowest-risk, but the reason pre-validation
   can't be 100% identical (the spare module uses ESPHome's own table).
+- **Chip revision (checked, OK):** the stock image is built with max chip rev v0.99, so the dock's C3
+  is rev v0.3–v0.99. Our ESPHome image accepts v0.3–v1.99, which contains the dock's rev, so the
+  bootloader won't reject it on a revision check. (See `bench-validation.md`.)
 
 ### The `recv_start_update` message (schema)
 Topic: `/device/OTA/recv_start_update/{dockId}` (published app/cloud → device).

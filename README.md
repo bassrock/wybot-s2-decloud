@@ -38,8 +38,11 @@ esphome/     custom replacement firmware for the ESP32-C3 (work in progress)
 - [x] Decompile all four images (GD32 x3 + ESP32-C3); see [`docs/boards.md`](docs/boards.md)
 - [ ] Extract the C3<->MCU UART pins/baud (bridge uses the UART HAL directly, no stock IDF driver call; needs an `iot_uart_task` xref pass or a logic-analyzer read on teardown)
 - [ ] Draft ESPHome firmware for the ESP32-C3
-- [ ] Confirm no secure-boot/flash-encryption eFuses (needs the dock opened + UART)
-- [ ] Back up stock flash, then flash custom firmware
+- [x] Bench-validate on a spare C3: image boots, DP-bridge firmware compiles+runs, chip-rev compatible ([`docs/bench-validation.md`](docs/bench-validation.md))
+- [ ] Confirm the `recv_start_update` envelope via one passive capture on the real dock
+- [ ] Rehearse ESPHome stage-2 OTA on the bench (needs real WiFi creds)
+- [ ] Discover the C3<->MCU UART pins (in-software GPIO scan on the dock, or logic analyzer)
+- [ ] Flash the dock via OTA, then iterate via ESPHome OTA
 
 ## Legal / safety
 
