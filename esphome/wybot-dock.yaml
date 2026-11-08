@@ -1,11 +1,12 @@
 # ESPHome firmware for the WyBot DS20 dock's ESP32-C3-MINI-1.
 #
 # As written this is the CONNECTIVITY-ONLY image: WiFi + native API + ESPHome OTA, and it drives
-# NO GPIO. That is deliberate. The dock's C3<->GD32 UART pins are not known yet, and the stock
-# OTA path has no rollback, so the first custom image must not route/drive any pin onto an unknown
-# net. Discover the pins first with wybot-dock-pinscan.yaml, then uncomment + fill the `uart:` /
-# `wybot_bridge:` / API-action blocks at the bottom with the real tx/rx/baud to make the functional
-# image, and OTA that.
+# NO GPIO. That is deliberate: it is the known-good minimal image that proves the board joins WiFi,
+# and a safe fallback. The functional image is wybot-dock-bridge.yaml (UART0 GPIO21/GPIO20, 115200).
+# This file was used before the C3<->MCU pins were confirmed, so the first custom image could not
+# risk driving a pin onto an unknown net on the no-rollback stock bootloader. The pins are now known
+# (see wybot-dock-bridge.yaml and docs/protocol-confirmed.md); the stage-2 block at the bottom is
+# kept as a minimal reference for wiring the bridge onto this skeleton.
 #
 # Pushed onto the dock the first time via WyBot's own (unsigned, md5-only) OTA channel. Because the
 # stock bootloader has no secure boot and no app-rollback, this first image MUST be known-good:
@@ -60,34 +61,24 @@ sensor:
     update_interval: 60s
 
 # ===========================================================================================
-# STAGE 2 (fill in after the pin scan; do NOT enable with guessed pins -- a wrong tx_pin routes
-# U1TXD as a push-pull output onto an unknown net on the no-rollback stock image):
+# To turn this skeleton into the functional bridge, add the confirmed UART + the wybot_bridge
+# component. The complete, maintained version of this (all DP sensors, the select/button controls
+# and the cleaning detector) is esphome/wybot-dock-bridge.yaml -- prefer running that directly.
+# Minimal form:
 #
 # external_components:
-#   - source: { type: local, path: components }
+#   - source: { type: local, path: components }   # or: github://bassrock/wybot-s2-decloud@main
+#     components: [ wybot_bridge ]
 #
 # uart:
-#   id: mcu_uart
-#   tx_pin: GPIO??       # from wybot-dock-pinscan.yaml (TX confirmed, not guessed)
-#   rx_pin: GPIO??       # the '** HIT **' pin
-#   baud_rate: 115200    # the baud that produced the AA55 hit
+#   id: mcu
+#   tx_pin: GPIO21        # C3 -> MCU (confirmed)
+#   rx_pin: GPIO20        # C3 <- MCU (confirmed)
+#   baud_rate: 115200
 #
 # wybot_bridge:
 #   id: bridge
-#   uart_id: mcu_uart
-#   status_text_sensor:
-#     name: WyBot Last Frame
-#
-# api:
-#   actions:
-#     - action: start_clean
-#       then: [ lambda: "id(bridge).start_clean();" ]
-#     - action: stop_clean
-#       then: [ lambda: "id(bridge).stop_clean();" ]
-#     - action: set_mode
-#       variables: { mode: int }
-#       then: [ lambda: "id(bridge).set_mode((uint8_t) mode);" ]
-#     - action: query_dp
-#       variables: { dp: int }
-#       then: [ lambda: "id(bridge).query((uint8_t) dp);" ]
+#   uart_id: mcu
+#   cleaning:
+#     name: "Cleaning"
 # ===========================================================================================

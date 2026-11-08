@@ -30,7 +30,9 @@ AA55 | cmd(2 bytes, big-endian) | len(2 bytes, little-endian) | [dp_id, dp_type,
 ```
 
 ### Internal C3 <-> GD32 UART (inferred)
-The C3 runs `iot_uart_task` and forwards the `recv_transparent_*` payloads to the motor MCU. The on-wire framing is almost certainly the same `AA55` DP frames as BLE. Replacement firmware re-emits these on the existing UART; exact pins/baud are being extracted from the iot image (and are trivially confirmed with a logic analyzer once the dock is opened).
+The C3 runs `iot_uart_task` and forwards the `recv_transparent_*` payloads to the motor MCU. The on-wire framing is the same `AA55` DP frames as BLE. Replacement firmware re-emits these on the existing UART.
+
+> **Confirmed live (no teardown needed):** the link is **UART0, 115200 8N1, `GPIO21` = C3→MCU TX, `GPIO20` = C3←MCU RX**, found with `esphome/wybot-dock-pinscan.yaml`. The full confirmed frame/command map is in [`protocol-confirmed.md`](protocol-confirmed.md); the rest of this file is the pre-confirmation static analysis, kept for the reasoning trail.
 
 ## DP catalog (from `pywybot` + observed traffic)
 
