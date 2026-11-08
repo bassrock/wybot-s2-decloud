@@ -1,0 +1,12 @@
+# Never commit the proprietary firmware binaries (re-fetch via firmware/manifest.tsv)
+*.bin
+*.img
+firmware/bin/
+stripped/
+# Never commit PII / secrets
+secrets.env
+*.local
+.DS_Store
+# Ghidra projects
+*.rep
+*.gpr

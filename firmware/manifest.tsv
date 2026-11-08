@@ -1,0 +1,13 @@
+board	role	chip	product_model	hw_ver	sw_ver	url	md5
+# --- The WyBot S2 (robot WY450) + DS20 Solar Dock system: 4 boards ---
+iot	WiFi/BLE comms gateway (REPLACE target) — ESP32-C3	ESP32-C3-MINI-1	DS20	5.127.0	2.2.20	http://gateway.wybotpool.com/IOT_DS20_C3MINI_H0_2025_06_09_V2.2.20.bin	422b804420b90ce6cbe5b96eab588887
+robot	robot motor/navigation MCU (KEEP)	GD32E103	WYS2P	42.13.2	1.7.22	http://gateway.wybotpool.com/WYBOT_S2P_main_V1.7.22_new.bin	d9d09af304174c98a93ea63cb82b4f64
+sonar_station	dock sonar/positioning MCU (KEEP)	GD32E103	DS20	1.0.1	1.5.6	http://gateway.wybotpool.com/DS20_Lower_MCU_V1.5.6_new.bin	a5e22795f031a036a2abeebcbe18d0fe
+9	dock upper MCU — charging/solar (KEEP)	GD32E103	DS20	0.12.1	1.6.6	http://gateway.wybotpool.com/DS20_Upper_MCU_V1.6.6_new.bin	f2c60de5b5b9cfb3e0e1dd5b9936f2e3
+# --- Sibling models seen in the same unauthenticated catalog (reference only, NOT part of this system) ---
+iot	comms (sibling product C1)	ESP32-C3-MINI-1	C1	0.127.0	2.2.20	http://gateway.wybotpool.com/IOT_BASIC_C3MINI_H0_2025_05_28_V2.2.20.bin	6e2c96ace18464945af970e2c889d382
+iot	comms (sibling product WYF1)	ESP32-C3	WYF1	4.127.0	2.2.29	http://gateway.wybotpool.com/IOT_WYF1_C127_H0_2025_10_23_V2.2.29.bin	93efc6ff7590b8894c51402ceb3a3432
+robot	motor MCU (sibling WYF1)	unknown	WYF1	35.0.2	1.1.13	http://gateway.wybotpool.com/WYF1_main_V1.1.13_new.bin	0f5a8bc707d64c9047a88f60b7d3b608
+robot	motor MCU (sibling S1/WY200)	GD32E103CB	WY200	3.0.0	1.4.17	http://gateway.wybotpool.com/WYBOT_S1_main_domestic_V1.4.17_new.bin	9e4d8a237069402388579292da98116a
+robot	motor MCU (sibling WY210C)	GD32E103CB	WY210C	11.0.0	1.5.8	http://gateway.wybotpool.com/WY210C_main_V1.5.8_new.bin	9459d2b1e96b66e067d90e7577823f45
+power	power board (sibling power1_170)	GD32F330C8	power1_170	0.6.0	0.7.8	http://gateway.wybotpool.com/power123H_main_V0.7.8_new.bin	67c892428c3c631529224056a96a8a2e
