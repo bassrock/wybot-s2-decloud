@@ -12,10 +12,20 @@
 # 0xE9, chip_id 5, appended SHA256 valid), so ESPHome OTA accepts it and the
 # real dock (chip rev <= v0.99, within the stock image's max rev v0.99) boots it.
 #
-# Mechanism: ESPHome's uploader streams the project's built firmware.ota.bin and
-# sends ITS md5. We temporarily swap the stock image in as that payload file, run
-# `esphome upload`, then restore. (`esphome upload` has no --file flag; swap-in
-# is the supported way to push an arbitrary app image through ESPHome OTA.)
+# Mechanism: ESPHome's uploader streams the project's built app image (for esp-idf
+# builds that is build/<name>.bin, confirmed from the upload log) and sends ITS md5.
+# We temporarily swap the stock image in as that payload file, run `esphome upload`,
+# then restore. (`esphome upload` has no --file flag; swap-in is the supported way to
+# push an arbitrary app image through ESPHome OTA.)
+#
+# VERIFIED on the bench 2026-11-07: a stock image transfers completely through ESPHome
+# OTA (no identity/signature/project gate). The device accepts it iff esp_ota_end()'s
+# image verify passes -- magic 0xE9 + appended SHA-256 + CHIP-REV. The real dock (rev
+# v0.3-0.99) passes stock's max-rev v0.99; a newer bench chip (rev 1.1) is rejected at
+# esp_ota_end BEFORE the boot partition is switched, so the bench stays on ESPHome.
+#
+# Uses `uvx esphome` (pinned-latest) deliberately: a bare `esphome` on this Mac may be a
+# stale pipx version that mixes build-tree versions and breaks the precompiled header.
 #
 # NOTE: this is a genuine one-way-until-you-reflash step on the real dock. Once it
 # boots stock, ESPHome is gone and you are back on WyBot's firmware (and its
@@ -62,19 +72,19 @@ print("  max_chip_rev_full = v0.%d (real dock must be <= this to BOOT)"
 sys.exit(0 if ok else 2)
 PY
 
-# The built OTA payload ESPHome uploads.
-BUILD_OTA=".esphome/build/wybot-dock/build/firmware.ota.bin"
-if [ ! -f "$BUILD_OTA" ]; then
-  echo "No built firmware.ota.bin yet; compiling once so the build tree exists..."
-  esphome compile "$YAML"
+# The built app image ESPHome actually uploads for an esp-idf build.
+BUILD_BIN=".esphome/build/wybot-dock/build/wybot-dock.bin"
+if [ ! -f "$BUILD_BIN" ]; then
+  echo "No built app image yet; compiling once so the build tree exists..."
+  uvx esphome compile "$YAML"
 fi
 
-BAK="${BUILD_OTA}.esphome-backup"
-cp -f "$BUILD_OTA" "$BAK"
-restore() { cp -f "$BAK" "$BUILD_OTA" && rm -f "$BAK"; echo "restored ESPHome OTA payload"; }
+BAK="${BUILD_BIN}.esphome-backup"
+cp -f "$BUILD_BIN" "$BAK"
+restore() { cp -f "$BAK" "$BUILD_BIN" && rm -f "$BAK"; echo "restored ESPHome payload"; }
 trap restore EXIT
 
 echo ">> swapping stock image in as the OTA payload and pushing to $DEV"
-cp -f "$STOCK" "$BUILD_OTA"
-esphome upload "$YAML" --device "$DEV"
-echo ">> upload finished; device should reboot into the stock image"
+cp -f "$STOCK" "$BUILD_BIN"
+uvx esphome upload "$YAML" --device "$DEV"
+echo ">> upload finished; on a chip-compatible device it reboots into the stock image"

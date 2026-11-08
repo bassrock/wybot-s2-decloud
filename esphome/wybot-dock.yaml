@@ -23,6 +23,12 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # ESP32-C3 "Super Mini" clones brown out / distort the TX at the default 20dBm on
+  # their cheap PCB antenna, which corrupts the WPA2 auth handshake (symptom:
+  # repeated reason='Auth Expired' on a plain WPA2 net). Daniel's water-softener C3
+  # (same board) runs stable at 8.5dB. The real dock's module may tolerate more, but
+  # 8.5dB is the known-good value for this hardware. (bench)
+  output_power: 8.5dB
   # Fallback AP + captive portal: if the home WiFi can't be joined, the dock still comes up
   # reachable, which removes the "booted but unreachable" failure mode.
   ap:

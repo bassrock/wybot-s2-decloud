@@ -41,3 +41,35 @@ be rehearsed on the bench once it is on WiFi.
 - Optionally rehearse `ota_push.py` end-to-end against a small local stand-in that mimics the
   WyBot MQTT OTA (connect to a local broker → download our URL → `esp_ota` → boot), to exercise
   the push/host/flash pipeline (not WyBot's exact handler).
+
+## Live bench run (2026-11-07): WiFi join + ESPHome OTA, both directions
+
+With real creds in `secrets.yaml`, the Super Mini was flashed over USB and:
+
+- **Joined WiFi, but only after an RF fix.** First boot looped on `reason='Auth Expired'`
+  against a plain WPA2/CCMP 2.4 GHz SSID (verified from the UDM: `wpa3_support:false`,
+  `pmf_mode:disabled`, `mac_filter_enabled:false` — none of which would block it). Root
+  cause is the ESP32-C3 "Super Mini" clone browning out / distorting TX at the default
+  20 dBm on its PCB antenna, which corrupts the WPA2 handshake. Fix (same as Daniel's
+  water-softener C3): **`wifi: output_power: 8.5dB`**. After that it associated cleanly —
+  UniFi shows it online, authorized, satisfaction 100%, ~-71 dBm. The real dock's module
+  may tolerate more power, but 8.5 dB is the known-good value for this board.
+- **Forward ESPHome OTA over WiFi works.** `esphome upload --device <ip>` → "OTA
+  successful" in ~11 s. This is the end-state "flash OTA via ESPHome."
+- **Stock-revert accept test (unpatched stock, over ESPHome OTA).** The stock
+  `IOT_DS20` image **transferred completely** through ESPHome OTA (full 1.48 MB, 948 KB
+  deflated) — no project-name / identity / signature gate rejected it, corroborating the
+  source analysis in `ota-flashing.md`. It failed only at the final `esp_ota_end()` step,
+  on the **chip-revision** check: `esp_ota_end()` runs `esp_image_verify`, which rejects
+  an image whose `max_chip_rev` (stock = v0.99) is below the actual chip (bench = v1.1).
+  That check fires **before** `set_boot_partition`, so the device never switched and kept
+  running ESPHome (verified still reachable after). 
+
+  Implication for the real dock: its chip is rev v0.3–v0.99, so the stock image's
+  v0.99 max is satisfied and the same `esp_ota_end()` succeeds → `set_boot_partition` →
+  boots stock. I.e. the only gate ESPHome OTA applies to a stock image is `esp_ota_end`'s
+  image validity (magic + appended SHA-256 + chip-rev) — never identity or signature — and
+  the real dock passes all three. To force the commit on the bench instead you must use the
+  **maxrev-patched** stock image; that then boots far enough to hit the stock runtime
+  hardware guard (reset loop) and needs a USB reflash to recover — which is why the
+  unpatched image is the right, self-recovering bench probe.
