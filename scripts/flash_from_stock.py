@@ -101,10 +101,15 @@ def validate_image(path, expect_chip_id=5):
     return problems, info
 
 
+class _ReuseTCPServer(socketserver.TCPServer):
+    # Set before __init__ binds the socket, so a quick re-run doesn't hit "address already in use"
+    # on the lingering TIME_WAIT socket (setting it on the instance after construction is a no-op).
+    allow_reuse_address = True
+
+
 def serve_dir(directory, port):
     handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=directory, **k)
-    httpd = socketserver.TCPServer(("0.0.0.0", port), handler)
-    httpd.allow_reuse_address = True
+    httpd = _ReuseTCPServer(("0.0.0.0", port), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
 
