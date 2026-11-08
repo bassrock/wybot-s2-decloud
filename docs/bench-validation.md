@@ -73,3 +73,16 @@ With real creds in `secrets.yaml`, the Super Mini was flashed over USB and:
   **maxrev-patched** stock image; that then boots far enough to hit the stock runtime
   hardware guard (reset loop) and needs a USB reflash to recover — which is why the
   unpatched image is the right, self-recovering bench probe.
+
+### Destructive commit confirmation (maxrev-patched stock, 2026-11-07)
+To prove the final `set_boot_partition` step on the bench, the **maxrev-patched** stock
+image (max_chip_rev forced to 0xFFFF, appended SHA-256 recomputed — magic 0xE9, chip_id 5,
+hash valid) was pushed through ESPHome OTA to the running device. This time `esp_ota_end()`
+passed (chip-rev no longer blocks) and ESPHome reported **"OTA successful" (commit 0.38 s)** —
+i.e. it accepted a non-ESPHome stock image, verified it, and **switched the boot partition**.
+The device then left WiFi (ESPHome API gone from its IP), confirming it booted the stock slot;
+on this rev-1.1 board the stock app immediately hit its runtime hardware guard (reset loop), so
+it never rejoined. Recovery was a single USB reflash of ESPHome, which rebooted and **rejoined
+WiFi in ~5 s**. This closes the loop: ESPHome OTA will accept, verify, commit and boot an
+arbitrary unsigned app image — exactly what a real-dock stock revert needs. (The patched image
+is a derivative of WyBot's copyrighted firmware and is intentionally kept out of the repo.)
