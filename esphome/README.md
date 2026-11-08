@@ -70,10 +70,13 @@ wybot_bridge:
   heartbeat_interval: 2s      # how often to poke the MCU so it keeps reporting
   cleaning:                   # optional: on-device "actually cleaning" binary sensor
     name: "Cleaning"
+  charging:                   # optional: on-device "robot is charging" binary sensor
+    name: "Robot Charging"
   battery_datapoint: 50       # DP whose byte[1] is robot battery %, byte[0] is charge state
   activity_datapoint: 111     # fast run-counter DP used as the activity proxy
   activity_threshold: 16      # counter advance/poll that counts as "moving"
   cleaning_timeout: 6min      # latch-off if no activity and not charging
+  charge_timeout: 10min       # charging latch-off if the battery % stops rising
   numeric_datapoints: [ ... ] # map DPs (or byte slices) to sensors
   text_datapoints:   [ ... ]  # map DPs to hex/int text sensors
 ```
