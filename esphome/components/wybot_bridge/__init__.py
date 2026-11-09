@@ -27,6 +27,14 @@ CONF_FORMAT = "format"
 CONF_OFFSET = "byte_offset"
 CONF_WIDTH = "byte_width"
 CONF_SIGNED = "signed"
+CONF_TIER = "tier"
+CONF_STATIC_INTERVAL = "static_interval"
+
+# Poll tiers. The MCU is a slave; the bridge round-robins one query per update_interval, so a flat
+# list makes every entity refresh at (DP count x interval). Tiering keeps the load-bearing DPs
+# quick while the many diagnostic DPs crawl. 4 of every 5 poll slots serve the FAST ring; the 5th
+# slot serves a due STATIC DP (re-polled every static_interval) else the next SLOW DP.
+TIER = {"fast": 0, "slow": 1, "static": 2}
 
 NUMERIC_SCHEMA = sensor.sensor_schema().extend(
     {
@@ -36,6 +44,7 @@ NUMERIC_SCHEMA = sensor.sensor_schema().extend(
         cv.Optional(CONF_OFFSET, default=-1): cv.int_range(min=-1, max=16),
         cv.Optional(CONF_WIDTH, default=-1): cv.int_range(min=-1, max=4),
         cv.Optional(CONF_SIGNED, default=False): cv.boolean,
+        cv.Optional(CONF_TIER, default="slow"): cv.one_of(*TIER, lower=True),
     }
 )
 
@@ -43,6 +52,7 @@ TEXT_SCHEMA = text_sensor.text_sensor_schema().extend(
     {
         cv.Required(CONF_DP): cv.int_range(min=0, max=255),
         cv.Optional(CONF_FORMAT, default="hex"): cv.one_of("hex", "int", lower=True),
+        cv.Optional(CONF_TIER, default="slow"): cv.one_of(*TIER, lower=True),
     }
 )
 
@@ -64,6 +74,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_ACTIVITY_THRESHOLD, default=16): cv.int_range(min=1, max=100000),
             cv.Optional(CONF_CLEANING_TIMEOUT, default="6min"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_CHARGE_TIMEOUT, default="10min"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_STATIC_INTERVAL, default="10min"): cv.positive_time_period_milliseconds,
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -81,6 +92,7 @@ async def to_code(config):
     cg.add(var.set_activity_threshold(config[CONF_ACTIVITY_THRESHOLD]))
     cg.add(var.set_cleaning_timeout(config[CONF_CLEANING_TIMEOUT]))
     cg.add(var.set_charge_timeout(config[CONF_CHARGE_TIMEOUT]))
+    cg.add(var.set_static_interval(config[CONF_STATIC_INTERVAL]))
 
     if CONF_CLEANING in config:
         bs = await binary_sensor.new_binary_sensor(config[CONF_CLEANING])
@@ -94,10 +106,11 @@ async def to_code(config):
         s = await sensor.new_sensor(conf)
         cg.add(
             var.add_numeric(
-                conf[CONF_DP], s, conf[CONF_SCALE], conf[CONF_OFFSET], conf[CONF_WIDTH], conf[CONF_SIGNED]
+                conf[CONF_DP], s, conf[CONF_SCALE], conf[CONF_OFFSET], conf[CONF_WIDTH],
+                conf[CONF_SIGNED], TIER[conf[CONF_TIER]]
             )
         )
 
     for conf in config.get(CONF_TEXT, []):
         ts = await text_sensor.new_text_sensor(conf)
-        cg.add(var.add_text(conf[CONF_DP], ts, conf[CONF_FORMAT] == "hex"))
+        cg.add(var.add_text(conf[CONF_DP], ts, conf[CONF_FORMAT] == "hex", TIER[conf[CONF_TIER]]))

@@ -100,33 +100,77 @@ wybot_bridge:
     name: "Robot Charging"
     icon: mdi:battery-charging
   # battery_datapoint: 50, activity_datapoint: 111, activity_threshold: 16, cleaning_timeout: 6min, charge_timeout: 10min (defaults)
+  # tier: fast (load-bearing, ~3.5s refresh) / static (constants, re-polled every static_interval) /
+  # slow (default, everything else, ~75s refresh). battery_datapoint(50) + activity_datapoint(111)
+  # are auto-forced fast by the component. See Fable's poll-budget analysis in the project notes.
   numeric_datapoints:
     # ---- robot battery / charge (DP50 = [charge_state][battery%]) ----
-    - { dp: 50, byte_offset: 1, byte_width: 1, name: "Robot Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0 }
+    - { dp: 50, byte_offset: 1, byte_width: 1, name: "Robot Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0, tier: fast }
     - { dp: 50, byte_offset: 0, byte_width: 1, id: charge_state, name: "Robot Charge State", internal: true }
     # ---- solar dock battery (DP221 = [flags][battery%][?]) ----
-    - { dp: 221, byte_offset: 1, byte_width: 1, name: "Solar Dock Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0 }
+    - { dp: 221, byte_offset: 1, byte_width: 1, name: "Solar Dock Battery", unit_of_measurement: "%", device_class: battery, state_class: measurement, accuracy_decimals: 0, tier: fast }
     - { dp: 221, byte_offset: 0, byte_width: 1, id: dock_flags, name: "Dock Flags", internal: true }
     # ---- hidden raw enums backing the select / text / binary entities ----
-    - { dp: 0,   id: status_raw,   name: "Cleaning Status Raw",  internal: true }
-    - { dp: 1,   id: mode_raw,     name: "Cleaning Mode Raw",    internal: true }
-    - { dp: 213, id: docked_raw,   name: "Docked Raw",           internal: true }
-    - { dp: 212, id: connected_raw, name: "Connected Raw",       internal: true }
+    - { dp: 0,   id: status_raw,   name: "Cleaning Status Raw",  internal: true, tier: fast }
+    - { dp: 1,   id: mode_raw,     name: "Cleaning Mode Raw",    internal: true, tier: fast }
+    - { dp: 213, id: docked_raw,   name: "Docked Raw",           internal: true, tier: fast }
+    - { dp: 212, id: connected_raw, name: "Connected Raw",       internal: true, tier: fast }
     - { dp: 214, id: docktype_raw, name: "Dock Type Raw",        internal: true }
     # ---- diagnostics (meaning still being mapped) ----
-    - { dp: 209, name: "Device Status (DP209)",  entity_category: diagnostic }
-    - { dp: 54,  name: "DP54",   entity_category: diagnostic }
-    - { dp: 59,  name: "DP59",   entity_category: diagnostic }
-    - { dp: 65,  name: "DP65",   entity_category: diagnostic }
-    - { dp: 83,  name: "DP83",   entity_category: diagnostic }
-    - { dp: 111, name: "DP111",  entity_category: diagnostic }
+    - { dp: 209, name: "Device Status (DP209)",  entity_category: diagnostic, tier: fast }
+    - { dp: 111, name: "DP111",  entity_category: diagnostic, tier: fast }   # fast run-counter = "is cleaning" proxy
     - { dp: 116, name: "DP116",  entity_category: diagnostic }
-    - { dp: 120, name: "DP120",  entity_category: diagnostic }
-    - { dp: 205, name: "DP205",  entity_category: diagnostic }
     - { dp: 210, name: "DP210",  entity_category: diagnostic }
     - { dp: 211, name: "DP211",  entity_category: diagnostic }
     - { dp: 216, name: "DP216",  entity_category: diagnostic }
     - { dp: 217, name: "DP217",  entity_category: diagnostic }
+    - { dp: 83,  name: "DP83",   entity_category: diagnostic }
+    # ---- confirmed-constant config/serial values: polled once, then every static_interval ----
+    - { dp: 54,  name: "DP54",   entity_category: diagnostic, tier: static }
+    - { dp: 59,  name: "DP59",   entity_category: diagnostic, tier: static }
+    - { dp: 65,  name: "DP65",   entity_category: diagnostic, tier: static }
+    - { dp: 120, name: "DP120",  entity_category: diagnostic, tier: static }
+    - { dp: 205, name: "DP205",  entity_category: diagnostic, tier: static }
+    # ---- UNMAPPED DPs that answer the 0..255 sweep but had no entity before (full capture, slow
+    #      tier). Names are frozen "DP<n>" so history never orphans; when one is decoded, add a
+    #      properly named entity and retire the bare one. Enums: no state_class. Ints: measurement,
+    #      auto-signed (dp37/dp60 go negative). Guesses are in the inline notes, not device_class. ----
+    - { dp: 2,  name: "DP2",  accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 6,  name: "DP6",  accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 7,  name: "DP7",  accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 8,  name: "DP8",  accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 29, name: "DP29", accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 73, name: "DP73", accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 74, name: "DP74", accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 75, name: "DP75", accuracy_decimals: 0, entity_category: diagnostic }
+    # dp20/21/22 appear to MIRROR dp0/1/2 (robot-side copy of status/mode). Not wired to the
+    # cleaning/charging/select logic until proven; watch for divergence from dp0/1/2.
+    - { dp: 20, name: "DP20 (status mirror?)", accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 21, name: "DP21 (mode mirror?)",   accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 22, name: "DP22 (DP2 mirror?)",    accuracy_decimals: 0, entity_category: diagnostic }
+    - { dp: 3,  name: "DP3",  state_class: measurement, entity_category: diagnostic }
+    - { dp: 4,  name: "DP4",  state_class: measurement, entity_category: diagnostic }
+    - { dp: 5,  name: "DP5",  state_class: measurement, entity_category: diagnostic }
+    - { dp: 16, name: "DP16", state_class: measurement, entity_category: diagnostic }
+    - { dp: 17, name: "DP17", state_class: measurement, entity_category: diagnostic }
+    - { dp: 25, name: "DP25", state_class: measurement, entity_category: diagnostic }   # ~26800, maybe panel mV
+    - { dp: 30, name: "DP30 (DP58 div 1000?)", state_class: measurement, entity_category: diagnostic }
+    - { dp: 33, name: "DP33", state_class: measurement, entity_category: diagnostic }
+    - { dp: 36, name: "DP36", state_class: measurement, entity_category: diagnostic }
+    - { dp: 37, name: "DP37", state_class: measurement, entity_category: diagnostic }
+    - { dp: 38, name: "DP38", state_class: measurement, entity_category: diagnostic }
+    - { dp: 40, name: "DP40", state_class: measurement, entity_category: diagnostic }
+    - { dp: 44, name: "DP44", state_class: measurement, entity_category: diagnostic }
+    - { dp: 46, name: "DP46", state_class: measurement, entity_category: diagnostic }
+    - { dp: 47, name: "DP47", state_class: measurement, entity_category: diagnostic }
+    - { dp: 51, name: "DP51", state_class: measurement, entity_category: diagnostic }
+    - { dp: 52, name: "DP52", state_class: measurement, entity_category: diagnostic }
+    - { dp: 55, name: "DP55", state_class: measurement, entity_category: diagnostic }
+    - { dp: 56, name: "DP56", state_class: measurement, entity_category: diagnostic }   # ~15828, maybe pack mV (4S)
+    - { dp: 58, name: "DP58 (lifetime counter?)", state_class: measurement, entity_category: diagnostic }
+    - { dp: 60, name: "DP60", state_class: measurement, entity_category: diagnostic }
+    - { dp: 61, name: "DP61", state_class: measurement, entity_category: diagnostic }
+    - { dp: 81, name: "DP81 (battery-like)", unit_of_measurement: "%", state_class: measurement, accuracy_decimals: 0, entity_category: diagnostic }
   text_datapoints:
     - { dp: 79, name: "Schedule (DP79)", format: hex, entity_category: diagnostic }
     - { dp: 13, name: "Status Bitmap (DP13)", format: hex, entity_category: diagnostic }

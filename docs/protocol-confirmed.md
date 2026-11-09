@@ -53,9 +53,22 @@ dp_id(1) | dp_type(1) | dp_len(1) | data[dp_len]
 
 F1-skimmer-only DPs (not this model): 70 systime, 142 pH+temp, 145 heavy-dirt, 206 depth, 207 auto-run.
 
-57 DPs total respond to a 0..255 query sweep; the unmapped ones (DP54/59/65/83/111/116/120/205/
-210/211/216/217 and others) are internal telemetry the cloud app did not surface — map them by
-correlating against a real cleaning run.
+57 DPs total respond to a 0..255 query sweep. As of 2026-11-09 **every responding DP is captured**
+in the firmware (no silent drops): the load-bearing ones carry real entities, and the rest are
+bare `DP<n>` diagnostic sensors. A catch-all in the component also WARN-logs (once) any reported DP
+that still has no entity, so a newly-appearing DP can never go unnoticed. The bare ones are internal
+telemetry the cloud app never surfaced — decode them by correlating against a real cleaning/charge
+cycle, then add a properly named entity and retire the `DP<n>` one (renaming orphans HA history).
+
+### Poll tiering (added 2026-11-09, Fable-advised)
+A flat round-robin over ~56 DPs at 350 ms = ~20 s per refresh, too slow for battery/status. The
+component now has three tiers, scheduled 4 fast slots : 1 slow/static slot:
+- **fast** (~3.5 s): DP0, DP1, DP50, DP111, DP209, DP212, DP213, DP221. (DP50 + DP111 are auto-forced
+  fast since the cleaning/charging detectors depend on them.)
+- **static** (polled at boot, re-polled every `static_interval`, default 10 min): DP54, DP59, DP65,
+  DP120, DP205 — confirmed constant (serial/model/config).
+- **slow** (~75 s, default): everything else, incl. all the newly-captured unmapped DPs.
+A control write bumps DP0/DP1/DP111 to the front of the queue so the UI reacts in well under a second.
 
 ## Implementation
 `esphome/wybot-dock-bridge.yaml` + `components/wybot_bridge/` implement this: 2 s heartbeat,

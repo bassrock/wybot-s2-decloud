@@ -58,14 +58,16 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   // dp -> entity registrations (from __init__.py). A DP may feed several numeric sensors,
   // each extracting a different slice (offset/width) of the DP data (e.g. DP50 byte1 =
   // charge state, byte2 = battery %). offset<0 + width<0 means "whole value".
-  void add_numeric(uint8_t dp, sensor::Sensor *s, float scale, int offset, int width, bool is_signed) {
+  void add_numeric(uint8_t dp, sensor::Sensor *s, float scale, int offset, int width, bool is_signed,
+                   uint8_t tier) {
     this->num_.push_back({dp, s, scale, offset, width, is_signed});
-    this->register_poll_(dp);
+    this->register_poll_(dp, tier);
   }
-  void add_text(uint8_t dp, text_sensor::TextSensor *s, bool as_hex) {
+  void add_text(uint8_t dp, text_sensor::TextSensor *s, bool as_hex, uint8_t tier) {
     this->txt_[dp] = {s, as_hex};
-    this->register_poll_(dp);
+    this->register_poll_(dp, tier);
   }
+  void set_static_interval(uint32_t ms) { this->static_interval_ms_ = ms; }
   // Latest raw DP data (hex), for template/select/button lambdas in YAML.
   bool dp_byte(uint8_t dp, int offset, uint8_t &out) const {
     auto it = this->last_data_.find(dp);
@@ -97,12 +99,19 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   void heartbeat() { this->send_cmd(0x00, {}); }
 
   // DP writes (control). value encoded per type.
-  void write_bool(uint8_t dp, bool v) { this->send_cmd(0x04, dp_frame_(dp, 0x01, {(uint8_t) (v ? 1 : 0)})); }
-  void write_enum(uint8_t dp, uint8_t v) { this->send_cmd(0x04, dp_frame_(dp, 0x04, {v})); }
+  void write_bool(uint8_t dp, bool v) {
+    this->send_cmd(0x04, dp_frame_(dp, 0x01, {(uint8_t) (v ? 1 : 0)}));
+    this->bump_fast_();
+  }
+  void write_enum(uint8_t dp, uint8_t v) {
+    this->send_cmd(0x04, dp_frame_(dp, 0x04, {v}));
+    this->bump_fast_();
+  }
   void write_int(uint8_t dp, int32_t v) {
     this->send_cmd(0x04, dp_frame_(dp, 0x02,
                                    {(uint8_t) (v & 0xFF), (uint8_t) ((v >> 8) & 0xFF),
                                     (uint8_t) ((v >> 16) & 0xFF), (uint8_t) ((v >> 24) & 0xFF)}));
+    this->bump_fast_();
   }
   // Escape hatch for exploration from HA: send arbitrary raw bytes verbatim.
   void send_raw(const std::vector<uint8_t> &bytes) { this->write_array(bytes); }
@@ -113,7 +122,8 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
 
   static uint8_t checksum_(const std::vector<uint8_t> &f, size_t upto);
   static std::vector<uint8_t> dp_frame_(uint8_t dp, uint8_t type, const std::vector<uint8_t> &data);
-  void register_poll_(uint8_t dp);
+  void register_poll_(uint8_t dp, uint8_t tier);  // tier: 0 fast, 1 slow, 2 static
+  void bump_fast_();  // after a control write, re-query the status/mode/activity DPs promptly
   void handle_frame_(const std::vector<uint8_t> &f);
   void handle_report_(const std::vector<uint8_t> &payload);
   void update_cleaning_(uint8_t dp, const std::vector<uint8_t> &data);  // battery/run-counter latch
@@ -123,8 +133,19 @@ class WybotBridge : public PollingComponent, public uart::UARTDevice {
   std::vector<NumReg> num_;
   std::map<uint8_t, TxtReg> txt_;
   std::map<uint8_t, std::vector<uint8_t>> last_data_;
-  std::vector<uint8_t> poll_list_;
-  size_t poll_idx_{0};
+
+  // Poll tiers (see __init__.py). tier_of_ keeps the strongest tier requested per DP; the three
+  // rings are rebuilt from it in setup(). The slot scheduler spends 4/5 of its slots on fast_ and
+  // the 5th on a due static_ DP (else the next slow_ DP). Values reported for a DP with no listener
+  // are WARN'd once (warned_) so nothing the device sends is silently dropped.
+  std::map<uint8_t, uint8_t> tier_of_;
+  std::vector<uint8_t> fast_, slow_, static_;
+  std::map<uint8_t, uint32_t> static_last_;  // dp -> last poll millis (static re-poll timer)
+  std::vector<uint8_t> priority_;            // DPs to query ASAP (filled by bump_fast_)
+  std::map<uint8_t, bool> warned_;           // unlistened DPs already logged
+  size_t fast_idx_{0}, slow_idx_{0};
+  uint32_t poll_counter_{0};
+  uint32_t static_interval_ms_{600000};  // re-poll each static DP every 10 min
 
   std::vector<uint8_t> rx_;
   uint32_t hb_interval_{2000};

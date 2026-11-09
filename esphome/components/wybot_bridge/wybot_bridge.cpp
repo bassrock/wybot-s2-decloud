@@ -22,11 +22,19 @@ std::vector<uint8_t> WybotBridge::dp_frame_(uint8_t dp, uint8_t type, const std:
   return p;
 }
 
-void WybotBridge::register_poll_(uint8_t dp) {
-  for (uint8_t d : this->poll_list_)
-    if (d == dp)
-      return;
-  this->poll_list_.push_back(dp);
+void WybotBridge::register_poll_(uint8_t dp, uint8_t tier) {
+  // Keep the STRONGEST (lowest-numbered) tier a DP was requested at: e.g. DP50 fed by both a fast
+  // numeric and a slow raw-text entry stays fast. The rings themselves are built in setup().
+  auto it = this->tier_of_.find(dp);
+  if (it == this->tier_of_.end() || tier < it->second)
+    this->tier_of_[dp] = tier;
+}
+
+void WybotBridge::bump_fast_() {
+  // After a control write, re-query the DPs the UI reacts to so it updates in well under a second
+  // instead of waiting for the fast ring to come around.
+  for (uint8_t dp : {(uint8_t) 0, (uint8_t) 1, this->activity_dp_})
+    this->priority_.push_back(dp);
 }
 
 void WybotBridge::send_cmd(uint8_t cmd, const std::vector<uint8_t> &payload) {
@@ -44,8 +52,27 @@ void WybotBridge::send_cmd(uint8_t cmd, const std::vector<uint8_t> &payload) {
 }
 
 void WybotBridge::setup() {
-  ESP_LOGCONFIG(TAG, "WyBot bridge up: %u DP(s) polled, heartbeat %ums", (unsigned) this->poll_list_.size(),
-                (unsigned) this->hb_interval_);
+  // The derived cleaning/charging detectors depend on the battery + run-counter DPs, so force those
+  // into the fast ring no matter what tier their entities asked for.
+  this->tier_of_[this->battery_dp_] = 0;
+  this->tier_of_[this->activity_dp_] = 0;
+  // Build the three poll rings from the per-DP tiers collected during registration.
+  this->fast_.clear();
+  this->slow_.clear();
+  this->static_.clear();
+  for (auto &kv : this->tier_of_) {
+    if (kv.second == 0)
+      this->fast_.push_back(kv.first);
+    else if (kv.second == 2)
+      this->static_.push_back(kv.first);
+    else
+      this->slow_.push_back(kv.first);
+  }
+  for (uint8_t dp : this->static_)
+    this->static_last_[dp] = 0;  // 0 = never polled -> due immediately
+  ESP_LOGCONFIG(TAG, "WyBot bridge up: %u fast / %u slow / %u static DP(s), heartbeat %ums",
+                (unsigned) this->fast_.size(), (unsigned) this->slow_.size(),
+                (unsigned) this->static_.size(), (unsigned) this->hb_interval_);
   if (this->cleaning_ != nullptr)
     this->cleaning_->publish_state(false);  // definite "off" at boot, not unknown (self-corrects on first drain)
   if (this->charging_sensor_ != nullptr)
@@ -108,11 +135,47 @@ void WybotBridge::loop() {
 }
 
 void WybotBridge::update() {
-  if (this->poll_list_.empty())
+  // 1) Anything bumped by a recent control write jumps the queue.
+  if (!this->priority_.empty()) {
+    uint8_t dp = this->priority_.front();
+    this->priority_.erase(this->priority_.begin());
+    this->query_dp(dp);
     return;
-  uint8_t dp = this->poll_list_[this->poll_idx_];
-  this->poll_idx_ = (this->poll_idx_ + 1) % this->poll_list_.size();
-  this->query_dp(dp);
+  }
+
+  // 2) 4 of every 5 slots serve the fast ring; the 5th serves a due static DP (re-polled every
+  //    static_interval), else the next slow DP. A non-responding DP never stalls a slot: we fire
+  //    and advance regardless of whether a reply comes.
+  const uint32_t now = millis();
+  bool slow_slot = (this->poll_counter_++ % 5) == 4;
+
+  if (!slow_slot && !this->fast_.empty()) {
+    uint8_t dp = this->fast_[this->fast_idx_ % this->fast_.size()];
+    this->fast_idx_++;
+    this->query_dp(dp);
+    return;
+  }
+
+  // slow slot (or fast ring empty): a static DP past its re-poll interval wins.
+  for (auto &kv : this->static_last_) {
+    if (now - kv.second >= this->static_interval_ms_) {
+      kv.second = now;
+      this->query_dp(kv.first);
+      return;
+    }
+  }
+  if (!this->slow_.empty()) {
+    uint8_t dp = this->slow_[this->slow_idx_ % this->slow_.size()];
+    this->slow_idx_++;
+    this->query_dp(dp);
+    return;
+  }
+  // nothing slow/static due -> use the slot for fast so the bus stays busy
+  if (!this->fast_.empty()) {
+    uint8_t dp = this->fast_[this->fast_idx_ % this->fast_.size()];
+    this->fast_idx_++;
+    this->query_dp(dp);
+  }
 }
 
 void WybotBridge::handle_frame_(const std::vector<uint8_t> &f) {
@@ -139,6 +202,20 @@ void WybotBridge::handle_report_(const std::vector<uint8_t> &p) {
 
     this->last_data_[dp] = data;  // cache for template/select/button lambdas
     this->update_cleaning_(dp, data);
+
+    // Catch-all: if the device reports a DP that no entity (and neither derived detector) listens
+    // for, log it ONCE with its type/len so nothing it sends goes unnoticed. This is the guarantee
+    // that "every data point is accounted for" even before each one has an entity.
+    if (!this->warned_.count(dp)) {
+      bool listened = this->txt_.count(dp) || dp == this->battery_dp_ || dp == this->activity_dp_;
+      for (auto &r : this->num_)
+        if (r.dp == dp) { listened = true; break; }
+      if (!listened) {
+        this->warned_[dp] = true;
+        ESP_LOGW(TAG, "unlistened DP%u (type=0x%02X len=%u) reported by MCU - no entity", (unsigned) dp,
+                 type, (unsigned) len);
+      }
+    }
 
     for (auto &r : this->num_) {
       if (r.dp != dp)
@@ -245,8 +322,9 @@ void WybotBridge::update_cleaning_(uint8_t dp, const std::vector<uint8_t> &data)
 }
 
 void WybotBridge::dump_config() {
-  ESP_LOGCONFIG(TAG, "WyBot bridge: AA5500 DP protocol over UART, %u polled DP(s)",
-                (unsigned) this->poll_list_.size());
+  ESP_LOGCONFIG(TAG, "WyBot bridge: AA5500 DP protocol over UART, %u fast / %u slow / %u static DP(s)",
+                (unsigned) this->fast_.size(), (unsigned) this->slow_.size(),
+                (unsigned) this->static_.size());
   this->check_uart_settings(115200);
 }
 
